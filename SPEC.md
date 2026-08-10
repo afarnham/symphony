@@ -4,6 +4,12 @@ Status: Draft v1 (language-agnostic)
 
 Purpose: Define a service that orchestrates coding agents to get project work done.
 
+This fork's GitHub Project tracker, backend-neutral runtime, Claude Code adapter, and SSH tracker
+tool transport are specified in
+[`docs/symphony-github-project-claude-integration.md`](docs/symphony-github-project-claude-integration.md).
+That extension preserves the Codex contract below while generalizing backend-specific runtime
+fields and adding the `github_project` tracker kind.
+
 ## Normative Language
 
 The key words `MUST`, `MUST NOT`, `REQUIRED`, `SHOULD`, `SHOULD NOT`, `RECOMMENDED`, `MAY`, and
@@ -398,6 +404,13 @@ Fields:
 - `terminal_states` (list of strings)
   - REQUIRED unless the selected adapter profile documents a default.
   - Values are provider-native state names compared case-insensitively by the scheduler.
+- `blocked_state` (string or null)
+  - OPTIONAL unless the selected adapter profile requires it.
+  - A provider-native state assigned when an agent requires human intervention.
+  - MUST be outside both `active_states` and `terminal_states` when configured.
+  - MUST differ from a configured completion/review state.
+  - A blocked claim remains held while the item stays in this state. Moving the item to an active
+    state other than the configured working state releases the claim for a human-requested retry.
 
 #### 5.3.2 `polling` (object)
 
@@ -613,6 +626,7 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.required_labels`: list of strings, default `[]`
 - `tracker.active_states`: list of provider-native state names, adapter-defined default
 - `tracker.terminal_states`: list of provider-native state names, adapter-defined default
+- `tracker.blocked_state`: provider-native state name or null, adapter-defined requirement
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`
 - `hooks.after_create`: shell script or null

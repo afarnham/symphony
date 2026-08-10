@@ -99,16 +99,16 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
           <article class="metric-card">
             <p class="metric-label">Total tokens</p>
-            <p class="metric-value numeric"><%= format_int(@payload.codex_totals.total_tokens) %></p>
+            <p class="metric-value numeric"><%= format_int(@payload.agent_totals.total_tokens) %></p>
             <p class="metric-detail numeric">
-              In <%= format_int(@payload.codex_totals.input_tokens) %> / Out <%= format_int(@payload.codex_totals.output_tokens) %>
+              In <%= format_int(@payload.agent_totals.input_tokens) %> / Out <%= format_int(@payload.agent_totals.output_tokens) %>
             </p>
           </article>
 
           <article class="metric-card">
             <p class="metric-label">Runtime</p>
             <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(@payload, @now)) %></p>
-            <p class="metric-detail">Total Codex runtime across completed and active sessions.</p>
+            <p class="metric-detail">Total agent runtime across completed and active sessions.</p>
           </article>
         </section>
 
@@ -150,7 +150,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <th>State</th>
                     <th>Session</th>
                     <th>Runtime / turns</th>
-                    <th>Codex update</th>
+                    <th>Agent update</th>
                     <th>Tokens</th>
                   </tr>
                 </thead>
@@ -159,6 +159,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="issue-stack">
                         <.issue_identifier identifier={entry.issue_identifier} url={entry.issue_url} />
+                        <span class="muted"><%= entry.backend || "n/a" %></span>
+                        <span :if={transport_summary(entry.transport)} class="muted">
+                          <%= transport_summary(entry.transport) %>
+                        </span>
                         <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
                       </div>
                     </td>
@@ -216,7 +220,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
           <div class="section-header">
             <div>
               <h2 class="section-title">Blocked sessions</h2>
-              <p class="section-copy">Issues paused because Codex requested operator input or approval.</p>
+              <p class="section-copy">Issues paused because an agent requested operator input or approval.</p>
             </div>
           </div>
 
@@ -240,6 +244,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="issue-stack">
                         <.issue_identifier identifier={entry.issue_identifier} url={entry.issue_url} />
+                        <span class="muted"><%= entry.backend || "n/a" %></span>
+                        <span :if={transport_summary(entry.transport)} class="muted">
+                          <%= transport_summary(entry.transport) %>
+                        </span>
                         <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
                       </div>
                     </td>
@@ -312,6 +320,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="issue-stack">
                         <.issue_identifier identifier={entry.issue_identifier} url={entry.issue_url} />
+                        <span class="muted"><%= entry.backend || "n/a" %></span>
                         <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
                       </div>
                     </td>
@@ -378,8 +387,20 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp external_issue_url(_url), do: nil
 
   defp completed_runtime_seconds(payload) do
-    payload.codex_totals.seconds_running || 0
+    payload.agent_totals.seconds_running || 0
   end
+
+  defp transport_summary(%{
+         mcp: %{enabled: true, health: mcp_health},
+         ssh_tunnel: %{health: tunnel_health}
+       })
+       when tunnel_health not in [nil, :disabled] do
+    "MCP #{mcp_health} · tunnel #{tunnel_health}"
+  end
+
+  defp transport_summary(%{mcp: %{enabled: true, health: health}}), do: "MCP #{health}"
+  defp transport_summary(%{mcp: %{enabled: false}}), do: "MCP disabled"
+  defp transport_summary(_transport), do: nil
 
   defp total_runtime_seconds(payload, now) do
     completed_runtime_seconds(payload) +

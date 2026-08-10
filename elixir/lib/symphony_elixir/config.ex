@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Config do
   Runtime configuration loaded from `WORKFLOW.md`.
   """
 
-  alias SymphonyElixir.{Config.Schema, Tracker}
+  alias SymphonyElixir.{AgentBackend, Config.Schema, Tracker}
   alias SymphonyElixir.{Workflow, WorkflowStore}
 
   @default_prompt_template """
@@ -88,8 +88,14 @@ defmodule SymphonyElixir.Config do
   @doc false
   @spec local_workspace_root() :: Path.t()
   def local_workspace_root do
+    local_workspace_root(settings!())
+  end
+
+  @doc false
+  @spec local_workspace_root(Schema.t()) :: Path.t()
+  def local_workspace_root(settings) do
     workflow_dir = Workflow.workflow_file_path() |> Path.expand() |> Path.dirname()
-    Path.expand(settings!().workspace.root, workflow_dir)
+    Path.expand(settings.workspace.root, workflow_dir)
   end
 
   @spec validate!() :: :ok | {:error, term()}
@@ -119,7 +125,18 @@ defmodule SymphonyElixir.Config do
     if is_nil(settings.tracker.kind) do
       {:error, :missing_tracker_kind}
     else
-      Tracker.validate_config(settings.tracker)
+      with :ok <- Tracker.validate_config(settings.tracker) do
+        AgentBackend.validate_config(settings)
+      end
+    end
+  end
+
+  @doc false
+  @spec prepare_settings(Schema.t()) :: {:ok, Schema.t()} | {:error, term()}
+  def prepare_settings(settings) do
+    with :ok <- validate_settings(settings),
+         {:ok, tracker_settings} <- Tracker.prepare_config(settings.tracker) do
+      {:ok, %{settings | tracker: tracker_settings}}
     end
   end
 

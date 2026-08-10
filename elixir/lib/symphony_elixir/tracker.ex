@@ -13,6 +13,7 @@ defmodule SymphonyElixir.Tracker do
   @adapters %{
     "asana" => SymphonyElixir.Asana.Adapter,
     "github" => SymphonyElixir.GitHub.Adapter,
+    "github_project" => SymphonyElixir.GitHubProject.Adapter,
     "gitlab" => SymphonyElixir.GitLab.Adapter,
     "jira" => SymphonyElixir.Jira.Adapter,
     "linear" => SymphonyElixir.Linear.Adapter,
@@ -21,13 +22,18 @@ defmodule SymphonyElixir.Tracker do
 
   @callback fetch_issues_by_states([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   @callback fetch_issues_by_ids([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
+  @callback update_issue_state(Issue.t(), String.t(), keyword()) ::
+              {:ok, Issue.t()} | {:error, term()}
   @callback agent_tool_specs() :: [map()]
   @callback execute_agent_tool(String.t(), term(), keyword()) :: map()
   @callback secret_environment_names(map()) :: [String.t()]
   @callback validate_config(map()) :: :ok | {:error, term()}
+  @callback prepare_config(map()) :: {:ok, map()} | {:error, term()}
 
   @optional_callbacks agent_tool_specs: 0,
                       execute_agent_tool: 3,
+                      update_issue_state: 3,
+                      prepare_config: 1,
                       validate_config: 1
 
   @spec fetch_issues_by_states([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
@@ -38,6 +44,67 @@ defmodule SymphonyElixir.Tracker do
   @spec fetch_issues_by_ids([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issues_by_ids(issue_ids) do
     adapter().fetch_issues_by_ids(issue_ids)
+  end
+
+  @spec fetch_bound_issues_by_ids(map(), [String.t()]) ::
+          {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_bound_issues_by_ids(
+        %{adapter: selected_adapter, tracker_settings: tracker_settings},
+        issue_ids
+      )
+      when is_list(issue_ids) do
+    if Code.ensure_loaded?(selected_adapter) and
+         function_exported?(selected_adapter, :fetch_issues_by_ids, 2) do
+      selected_adapter.fetch_issues_by_ids(
+        issue_ids,
+        tracker_settings: tracker_settings
+      )
+    else
+      selected_adapter.fetch_issues_by_ids(issue_ids)
+    end
+  end
+
+  @spec fetch_bound_issues_by_states(map(), [String.t()]) ::
+          {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_bound_issues_by_states(
+        %{adapter: selected_adapter, tracker_settings: tracker_settings},
+        states
+      )
+      when is_list(states) do
+    if Code.ensure_loaded?(selected_adapter) and
+         function_exported?(selected_adapter, :fetch_issues_by_states, 2) do
+      selected_adapter.fetch_issues_by_states(
+        states,
+        tracker_settings: tracker_settings
+      )
+    else
+      selected_adapter.fetch_issues_by_states(states)
+    end
+  end
+
+  @spec bind_config(map()) :: {:ok, map()} | {:error, term()}
+  def bind_config(%{kind: kind} = tracker_settings) do
+    with {:ok, selected_adapter} <- adapter_for_kind(kind) do
+      {:ok, %{adapter: selected_adapter, tracker_settings: tracker_settings}}
+    end
+  end
+
+  @spec update_issue_state(Issue.t(), String.t(), keyword()) ::
+          {:ok, Issue.t()} | {:error, term()}
+  def update_issue_state(%Issue{} = issue, state, opts \\ []) when is_binary(state) do
+    selected_adapter = Keyword.get(opts, :adapter, adapter())
+    tracker_settings = Keyword.get(opts, :tracker_settings, Config.settings!().tracker)
+
+    if Code.ensure_loaded?(selected_adapter) and
+         function_exported?(selected_adapter, :update_issue_state, 3) do
+      selected_adapter.update_issue_state(
+        issue,
+        state,
+        Keyword.put_new(opts, :tracker_settings, tracker_settings)
+      )
+    else
+      {:error, :state_transition_not_supported}
+    end
   end
 
   @doc """
@@ -80,6 +147,17 @@ defmodule SymphonyElixir.Tracker do
         adapter.validate_config(tracker_settings)
       else
         :ok
+      end
+    end
+  end
+
+  @spec prepare_config(map()) :: {:ok, map()} | {:error, term()}
+  def prepare_config(%{kind: kind} = tracker_settings) do
+    with {:ok, adapter} <- adapter_for_kind(kind) do
+      if Code.ensure_loaded?(adapter) and function_exported?(adapter, :prepare_config, 1) do
+        adapter.prepare_config(tracker_settings)
+      else
+        {:ok, tracker_settings}
       end
     end
   end
