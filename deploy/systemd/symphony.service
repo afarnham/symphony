@@ -1,0 +1,25 @@
+[Unit]
+Description=Symphony container stack
+Documentation=https://github.com/GHW-Consulting/symphony/blob/main/docs/linux-container-deployment.md
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+ConditionPathExists=/opt/symphony/compose.yaml
+ConditionPathExists=/etc/symphony/deployment.env
+ConditionPathExists=/etc/symphony/WORKFLOW.md
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/symphony
+Environment=COMPOSE_PROJECT_NAME=symphony
+EnvironmentFile=/etc/symphony/deployment.env
+ExecStartPre=/usr/local/sbin/symphony-admin secrets verify
+ExecStartPre=/usr/bin/docker compose config --quiet
+ExecStart=/usr/bin/docker compose up --detach --remove-orphans --wait
+ExecStopPost=/usr/bin/docker compose stop --timeout 30
+TimeoutStartSec=10min
+TimeoutStopSec=2min
+
+[Install]
+WantedBy=multi-user.target

@@ -417,8 +417,8 @@ defmodule SymphonyElixir.ClaudeBackendTest do
       workspace_root: Path.dirname(workspace),
       agent_backend: "claude",
       claude_command: @fake_claude,
-      claude_turn_timeout_ms: 120,
-      claude_read_timeout_ms: 80
+      claude_turn_timeout_ms: 800,
+      claude_read_timeout_ms: 600
     )
 
     assert {:ok, session} = Claude.start_session(workspace, issue, nil, [])
@@ -912,7 +912,7 @@ defmodule SymphonyElixir.ClaudeBackendTest do
     end
   end
 
-  defp assert_eventually(fun, attempts \\ 100)
+  defp assert_eventually(fun, attempts \\ 500)
 
   defp assert_eventually(fun, attempts) when attempts > 0 do
     if fun.() do

@@ -6,6 +6,7 @@ defmodule SymphonyElixir.SSH do
   @max_port 65_535
   @default_tunnel_startup_timeout 10_000
   @default_tunnel_poll_interval 25
+  @default_tunnel_control_timeout 1_000
   @default_input_timeout 10_000
   @forward_probe_body "symphony-ssh-forward-probe-ok"
   @forward_probe_attempts 3
@@ -79,11 +80,13 @@ defmodule SymphonyElixir.SSH do
       when is_binary(host) and is_list(opts) do
     startup_timeout = Keyword.get(opts, :startup_timeout, @default_tunnel_startup_timeout)
     poll_interval = Keyword.get(opts, :poll_interval, @default_tunnel_poll_interval)
+    control_timeout = Keyword.get(opts, :control_timeout, @default_tunnel_control_timeout)
 
     with :ok <- validate_tunnel_port(:remote, remote_port),
          :ok <- validate_tunnel_port(:local, local_port),
          :ok <- validate_positive_timeout(:startup_timeout, startup_timeout),
          :ok <- validate_positive_timeout(:poll_interval, poll_interval),
+         :ok <- validate_positive_timeout(:control_timeout, control_timeout),
          {:ok, executable} <- ssh_executable(),
          {:ok, control_directory, control_path} <- create_control_path(),
          {:ok, tunnel} <-
@@ -95,7 +98,7 @@ defmodule SymphonyElixir.SSH do
              control_directory,
              control_path,
              self(),
-             startup_timeout
+             control_timeout
            ) do
       await_tunnel_ready(tunnel, startup_timeout, poll_interval)
     end

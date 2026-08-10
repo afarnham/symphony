@@ -1,0 +1,9 @@
+[credential]
+	helper = /usr/local/bin/symphony-git-credential
+
+[credential "https://github.com"]
+	useHttpPath = false
+
+[user]
+	name = Symphony Agent
+	email = symphony-agent@users.noreply.github.com

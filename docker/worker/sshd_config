@@ -1,0 +1,27 @@
+Port 2222
+ListenAddress 0.0.0.0
+AddressFamily any
+HostKey /run/secrets/worker_ssh_host_private_key
+PidFile /tmp/symphony-sshd.pid
+AuthorizedKeysFile /run/secrets/worker_ssh_authorized_key
+AllowUsers worker
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+UsePAM no
+PermitRootLogin no
+PermitEmptyPasswords no
+AllowTcpForwarding remote
+GatewayPorts no
+X11Forwarding no
+PermitTunnel no
+PermitUserEnvironment no
+SetEnv GH_CONFIG_DIR=/tmp/symphony-gh NPM_CONFIG_CACHE=/home/worker/.cache/npm PNPM_HOME=/home/worker/.local/share/pnpm XDG_CACHE_HOME=/home/worker/.cache XDG_DATA_HOME=/home/worker/.local/share
+PrintMotd no
+TCPKeepAlive yes
+ClientAliveInterval 30
+ClientAliveCountMax 3
+Subsystem sftp internal-sftp
+LogLevel INFO

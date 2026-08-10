@@ -1,0 +1,5 @@
+**
+!Dockerfile
+!*.sh
+!gitconfig
+!sshd_config

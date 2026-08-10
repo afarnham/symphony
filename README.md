@@ -35,6 +35,12 @@ help with the setup:
 > Set up Symphony for my repository based on
 > https://github.com/openai/symphony/blob/main/elixir/README.md
 
+### Option 3. Deploy the container stack to a Linux VM
+
+This fork includes separate orchestrator and SSH worker containers, file-backed runtime secrets,
+and a systemd-managed Docker Compose deployment. See the
+[Linux container deployment runbook](docs/linux-container-deployment.md).
+
 ---
 
 ## License

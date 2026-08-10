@@ -84,7 +84,12 @@ defmodule SymphonyElixir.Asana.AdapterTest do
     assert {:error, :invalid_asana_endpoint} =
              AsanaClient.validate_settings(tracker_settings(%{"endpoint" => "http://app.asana.com/api/1.0"}))
 
-    assert AsanaClient.secret_environment_names(tracker_settings(%{"api_key" => "$SYMPHONY_ASANA_PAT"})) == ["ASANA_PAT", "SYMPHONY_ASANA_PAT"]
+    assert AsanaClient.secret_environment_names(tracker_settings(%{"api_key" => "$SYMPHONY_ASANA_PAT"})) == [
+             "ASANA_PAT",
+             "ASANA_PAT_FILE",
+             "SYMPHONY_ASANA_PAT",
+             "SYMPHONY_ASANA_PAT_FILE"
+           ]
 
     assert {:ok, []} =
              AsanaClient.fetch_issues_by_states_for_test(
@@ -370,7 +375,14 @@ defmodule SymphonyElixir.Asana.AdapterTest do
     binding = Tracker.bind_agent_tools()
 
     assert binding.adapter == AsanaAdapter
-    assert binding.secret_environment_names == ["ASANA_PAT", token_env]
+
+    assert binding.secret_environment_names == [
+             "ASANA_PAT",
+             "ASANA_PAT_FILE",
+             token_env,
+             token_env <> "_FILE"
+           ]
+
     assert [%{"name" => "asana_api"}] = binding.tool_specs
     assert :ok = Config.validate!()
   end

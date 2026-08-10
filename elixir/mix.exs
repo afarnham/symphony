@@ -117,7 +117,7 @@ defmodule SymphonyElixir.MixProject do
   defp releases do
     [
       symphony: [
-        steps: [:assemble, &Burrito.wrap/1],
+        steps: release_steps(),
         burrito: [
           targets: [
             macos_arm64: [os: :darwin, cpu: :aarch64],
@@ -128,5 +128,12 @@ defmodule SymphonyElixir.MixProject do
         ]
       ]
     ]
+  end
+
+  defp release_steps do
+    case System.get_env("SYMPHONY_RELEASE_FORMAT") do
+      "container" -> [:assemble]
+      _format -> [:assemble, &Burrito.wrap/1]
+    end
   end
 end

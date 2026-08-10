@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Config.Schema do
   import Ecto.Changeset
 
   alias SymphonyElixir.PathSafety
+  alias SymphonyElixir.Secret
 
   @primary_key false
   @linear_endpoint "https://api.linear.app/graphql"
@@ -232,7 +233,7 @@ defmodule SymphonyElixir.Config.Schema do
       )
       |> validate_required([:command])
       |> validate_change(:command, fn :command, command ->
-        if command != "" and String.trim(command) == "" do
+        if String.trim(command) == "" do
           [command: "can't be blank"]
         else
           []
@@ -485,8 +486,7 @@ defmodule SymphonyElixir.Config.Schema do
             |> Map.put_new("project_slug", settings.tracker.project_slug)
             |> Map.put_new("assignee", settings.tracker.assignee)
 
-          resolved_api_key =
-            resolve_secret_setting(linear_provider["api_key"], System.get_env("LINEAR_API_KEY"))
+          resolved_api_key = Secret.resolve(linear_provider["api_key"], "LINEAR_API_KEY")
 
           resolved_assignee =
             resolve_secret_setting(linear_provider["assignee"], System.get_env("LINEAR_ASSIGNEE"))
@@ -495,7 +495,8 @@ defmodule SymphonyElixir.Config.Schema do
             resolved_api_key,
             resolved_assignee,
             linear_provider,
-            ["LINEAR_API_KEY" | env_reference_names([linear_provider["api_key"]])]
+            Secret.environment_names(["LINEAR_API_KEY"]) ++
+              Secret.reference_environment_names([linear_provider["api_key"]])
           }
 
         _ ->
@@ -621,15 +622,6 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp env_reference_name(_value), do: :error
-
-  defp env_reference_names(values) when is_list(values) do
-    Enum.flat_map(values, fn value ->
-      case env_reference_name(value) do
-        {:ok, env_name} -> [env_name]
-        :error -> []
-      end
-    end)
-  end
 
   defp resolve_env_token(env_name) do
     case System.get_env(env_name) do

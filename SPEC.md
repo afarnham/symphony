@@ -390,9 +390,12 @@ Fields:
   - Adapter-owned configuration such as endpoint, scope/project selector, and credentials.
   - Core Symphony MUST preserve unknown keys and MUST NOT prescribe one cross-provider credential
     or scope schema.
-  - Each adapter MUST document its required keys, defaults, secret keys, `$VAR_NAME` support, and
-    validation errors.
+  - Each adapter MUST document its required keys, defaults, secret keys, `$VAR_NAME` and
+    `file:///absolute/path` support, and validation errors.
   - If a documented secret `$VAR_NAME` resolves to an empty string, treat that secret as missing.
+  - When `$VAR_NAME` is unset, implementations MAY read the secret from the absolute regular file
+    named by `VAR_NAME_FILE`. If either environment variable is explicitly present but invalid or
+    empty, validation MUST fail closed rather than silently select another identity.
 - `required_labels` (list of strings)
   - Default: `[]`.
   - An issue MUST contain every configured label to dispatch or continue.
@@ -1760,13 +1763,16 @@ RECOMMENDED additional hardening for ports:
 
 ### 15.3 Secret Handling
 
-- Support `$VAR` indirection in workflow config.
+- Support `$VAR` and absolute `file:///path` indirection for documented tracker secrets in workflow
+  config. Bound file reads, require regular files, and treat unsafe, missing, empty, or unreadable
+  files as missing credentials.
 - Do not log API tokens or secret env values.
 - Validate presence of secrets without printing them.
 - Execute provider-native tracker tools in the Symphony host process with the configured adapter
   credential.
 - Do not pass tracker credentials through the coding-agent child environment. Adapters MUST declare
-  secret environment names so local and remote launchers can remove them from child environments.
+  secret environment names, including supported `_FILE` counterparts, so local and remote
+  launchers can remove them from child environments.
 - Do not place literal tracker credentials in a repo-owned `WORKFLOW.md` when the child can read
   that workspace; use host-side secret references instead.
 
@@ -2089,7 +2095,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Config defaults apply when OPTIONAL values are missing
 - `tracker.kind` validation enforces an implementation-supported adapter
 - `tracker.provider` preserves adapter-owned keys and validates them through the selected adapter
-- `$VAR` resolution works for documented adapter secret keys and path values
+- `$VAR` (including the `VAR_FILE` environment fallback) and absolute `file:///path` resolution
+  work for documented adapter secret keys; `$VAR` resolution continues to work for path values
 - `~` path expansion works
 - `codex.command` is preserved as a shell command string
 - Per-state concurrency override map normalizes state names and ignores invalid values

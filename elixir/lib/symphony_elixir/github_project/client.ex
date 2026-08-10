@@ -10,6 +10,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
 
   alias SymphonyElixir.Config
   alias SymphonyElixir.GitHubProject.Normalizer
+  alias SymphonyElixir.Secret
   alias SymphonyElixir.Tracker.Issue
 
   @default_api_url "https://api.github.com"
@@ -43,7 +44,8 @@ defmodule SymphonyElixir.GitHubProject.Client do
   def secret_environment_names(tracker_settings) do
     provider = provider_settings(tracker_settings)
 
-    ["GITHUB_TOKEN" | env_reference_names([provider["token"]])]
+    (Secret.environment_names(["GITHUB_TOKEN"]) ++
+       Secret.reference_environment_names([provider["token"]]))
     |> Enum.uniq()
   end
 
@@ -937,17 +939,8 @@ defmodule SymphonyElixir.GitHubProject.Client do
   defp request_method("DELETE"), do: {:ok, :delete}
   defp request_method(_method), do: {:error, :invalid_github_project_method}
 
-  defp resolve_token(nil), do: normalize_string(System.get_env("GITHUB_TOKEN"))
-
-  defp resolve_token("$" <> env_name) do
-    if valid_env_name?(env_name) do
-      normalize_string(System.get_env(env_name))
-    else
-      nil
-    end
-  end
-
-  defp resolve_token(value), do: normalize_string(value)
+  defp resolve_token(nil), do: Secret.resolve(nil, "GITHUB_TOKEN")
+  defp resolve_token(value), do: Secret.resolve(value)
 
   defp bounded_error_body(body, token) do
     body
@@ -982,18 +975,6 @@ defmodule SymphonyElixir.GitHubProject.Client do
   end
 
   defp normalize_string(_value), do: nil
-
-  defp env_reference_names(values) do
-    Enum.flat_map(values, fn
-      "$" <> env_name when is_binary(env_name) ->
-        if valid_env_name?(env_name), do: [env_name], else: []
-
-      _ ->
-        []
-    end)
-  end
-
-  defp valid_env_name?(name), do: String.match?(name, ~r/^[A-Za-z_][A-Za-z0-9_]*$/)
 
   defp normalize_optional(value) when is_binary(value), do: normalize_state(value)
   defp normalize_optional(_value), do: nil
