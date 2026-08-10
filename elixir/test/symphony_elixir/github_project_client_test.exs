@@ -172,7 +172,29 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
       assert {:error, :missing_github_project_token} =
                Client.validate_settings(tracker_settings(%{"token" => 123}))
 
-      assert Client.secret_environment_names(tracker_settings(%{"token" => "$SYMPHONY_PROJECT_TOKEN"})) == ["GITHUB_TOKEN", "SYMPHONY_PROJECT_TOKEN"]
+      assert Client.secret_environment_names(tracker_settings(%{"token" => "$SYMPHONY_PROJECT_TOKEN"})) == [
+               "GITHUB_TOKEN",
+               "GITHUB_TOKEN_FILE",
+               "SYMPHONY_PROJECT_TOKEN",
+               "SYMPHONY_PROJECT_TOKEN_FILE"
+             ]
+    end
+
+    test "loads the tracker token from an absolute file reference" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "symphony-github-project-token-#{System.unique_integer([:positive])}"
+        )
+
+      File.write!(path, "file-backed-token\n")
+      on_exit(fn -> File.rm(path) end)
+
+      assert :ok =
+               Client.validate_settings(tracker_settings(%{"token" => "file://#{path}"}))
+
+      assert {:error, :missing_github_project_token} =
+               Client.validate_settings(tracker_settings(%{"token" => "file:///does/not/exist"}))
     end
 
     test "loads an owner-specific snapshot and follows field pagination" do

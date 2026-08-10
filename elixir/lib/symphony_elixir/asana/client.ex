@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Asana.Client do
 
   require Logger
   alias SymphonyElixir.Config
+  alias SymphonyElixir.Secret
   alias SymphonyElixir.Tracker.Issue
 
   @default_endpoint "https://app.asana.com/api/1.0"
@@ -35,7 +36,8 @@ defmodule SymphonyElixir.Asana.Client do
   def secret_environment_names(tracker_settings) do
     provider = provider_settings(tracker_settings)
 
-    ["ASANA_PAT" | env_reference_names([provider["api_key"]])]
+    (Secret.environment_names(["ASANA_PAT"]) ++
+       Secret.reference_environment_names([provider["api_key"]]))
     |> Enum.uniq()
   end
 
@@ -325,7 +327,7 @@ defmodule SymphonyElixir.Asana.Client do
   defp settings(tracker_settings) when is_map(tracker_settings) do
     provider = provider_settings(tracker_settings)
     endpoint = provider["endpoint"] || @default_endpoint
-    api_key = resolve_setting(provider["api_key"], System.get_env("ASANA_PAT"))
+    api_key = Secret.resolve(provider["api_key"], "ASANA_PAT")
     project_gid = resolve_setting(provider["project_gid"], nil)
 
     cond do
@@ -371,13 +373,6 @@ defmodule SymphonyElixir.Asana.Client do
   end
 
   defp normalize_string(_value), do: nil
-
-  defp env_reference_names(values) do
-    Enum.flat_map(values, fn
-      "$" <> env_name when is_binary(env_name) -> if valid_env_name?(env_name), do: [env_name], else: []
-      _ -> []
-    end)
-  end
 
   defp valid_env_name?(name), do: String.match?(name, ~r/^[A-Za-z_][A-Za-z0-9_]*$/)
 

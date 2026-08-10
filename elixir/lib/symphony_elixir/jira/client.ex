@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Jira.Client do
 
   require Logger
   alias SymphonyElixir.Config
+  alias SymphonyElixir.Secret
   alias SymphonyElixir.Tracker.Issue
 
   @page_size 100
@@ -29,7 +30,8 @@ defmodule SymphonyElixir.Jira.Client do
   def secret_environment_names(tracker_settings) do
     provider = provider_settings(tracker_settings)
 
-    ["JIRA_API_TOKEN" | env_reference_names([provider["api_token"]])]
+    (Secret.environment_names(["JIRA_API_TOKEN"]) ++
+       Secret.reference_environment_names([provider["api_token"]]))
     |> Enum.uniq()
   end
 
@@ -414,7 +416,7 @@ defmodule SymphonyElixir.Jira.Client do
     provider = provider_settings(tracker_settings)
     base_url = resolve_setting(provider["base_url"], System.get_env("JIRA_BASE_URL"))
     email = resolve_setting(provider["email"], System.get_env("JIRA_EMAIL"))
-    api_token = resolve_setting(provider["api_token"], System.get_env("JIRA_API_TOKEN"))
+    api_token = Secret.resolve(provider["api_token"], "JIRA_API_TOKEN")
     project_key = resolve_setting(provider["project_key"], nil)
 
     cond do
@@ -479,13 +481,6 @@ defmodule SymphonyElixir.Jira.Client do
   end
 
   defp terminal_states(_tracker_settings), do: []
-
-  defp env_reference_names(values) do
-    Enum.flat_map(values, fn
-      "$" <> env_name when is_binary(env_name) -> if valid_env_name?(env_name), do: [env_name], else: []
-      _ -> []
-    end)
-  end
 
   defp valid_env_name?(name), do: String.match?(name, ~r/^[A-Za-z_][A-Za-z0-9_]*$/)
 

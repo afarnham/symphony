@@ -5,6 +5,7 @@ defmodule SymphonyElixir.GitHub.Client do
 
   require Logger
   alias SymphonyElixir.Config
+  alias SymphonyElixir.Secret
   alias SymphonyElixir.Tracker.Issue
 
   @default_api_url "https://api.github.com"
@@ -21,7 +22,8 @@ defmodule SymphonyElixir.GitHub.Client do
   def secret_environment_names(tracker_settings) do
     provider = provider_settings(tracker_settings)
 
-    ["GITHUB_TOKEN" | env_reference_names([provider["token"]])]
+    (Secret.environment_names(["GITHUB_TOKEN"]) ++
+       Secret.reference_environment_names([provider["token"]]))
     |> Enum.uniq()
   end
 
@@ -281,7 +283,7 @@ defmodule SymphonyElixir.GitHub.Client do
     provider = provider_settings(tracker_settings)
     api_url = provider["api_url"] || @default_api_url
     repo = resolve_setting(provider["repo"], System.get_env("GITHUB_REPO"))
-    token = resolve_setting(provider["token"], System.get_env("GITHUB_TOKEN"))
+    token = Secret.resolve(provider["token"], "GITHUB_TOKEN")
 
     cond do
       not valid_api_url?(api_url) -> {:error, :invalid_github_api_url}
@@ -315,13 +317,6 @@ defmodule SymphonyElixir.GitHub.Client do
   end
 
   defp normalize_string(_value), do: nil
-
-  defp env_reference_names(values) do
-    Enum.flat_map(values, fn
-      "$" <> env_name when is_binary(env_name) -> if valid_env_name?(env_name), do: [env_name], else: []
-      _ -> []
-    end)
-  end
 
   defp valid_env_name?(name), do: String.match?(name, ~r/^[A-Za-z_][A-Za-z0-9_]*$/)
 

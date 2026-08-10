@@ -1,0 +1,641 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+set +x
+umask 077
+
+PROGRAM_NAME="symphony-admin"
+DEFAULT_SECRETS_ROOT="/etc/symphony/secrets"
+SECRETS_ROOT="${SYMPHONY_SECRETS_DIR:-${SYMPHONY_SECRETS_ROOT:-$DEFAULT_SECRETS_ROOT}}"
+COMPOSE_FILE="${SYMPHONY_COMPOSE_FILE:-/opt/symphony/compose.yaml}"
+DEPLOYMENT_ENV_FILE="${SYMPHONY_ENV_FILE:-/etc/symphony/deployment.env}"
+COMPOSE_PROJECT="${SYMPHONY_COMPOSE_PROJECT:-symphony}"
+WORKER_SERVICE="${SYMPHONY_WORKER_SERVICE:-agent-worker}"
+VOLUME_INIT_SERVICE="${SYMPHONY_VOLUME_INIT_SERVICE:-volume-init}"
+CONTAINER_CLI="${SYMPHONY_CONTAINER_CLI:-docker}"
+SECRET_UID="${SYMPHONY_SECRET_UID:-10001}"
+SECRET_GID="${SYMPHONY_SECRET_GID:-10001}"
+
+TTY_ECHO_DISABLED=0
+TEMP_PATH=""
+TEMP_KEY_DIR=""
+
+cleanup() {
+  local exit_status=$?
+
+  if [[ "$TTY_ECHO_DISABLED" -eq 1 ]]; then
+    stty echo </dev/tty >/dev/null 2>&1 || true
+    TTY_ECHO_DISABLED=0
+  fi
+
+  if [[ -n "$TEMP_PATH" ]]; then
+    rm -f -- "$TEMP_PATH"
+    TEMP_PATH=""
+  fi
+
+  if [[ -n "$TEMP_KEY_DIR" ]]; then
+    rm -f -- "$TEMP_KEY_DIR/key" "$TEMP_KEY_DIR/key.pub"
+    rmdir -- "$TEMP_KEY_DIR" >/dev/null 2>&1 || true
+    TEMP_KEY_DIR=""
+  fi
+
+  exit "$exit_status"
+}
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 131' QUIT
+trap 'exit 143' TERM
+
+usage() {
+  cat <<'EOF'
+Usage:
+  symphony-admin secrets init
+  symphony-admin secrets set <name> [--stdin]
+  symphony-admin secrets list
+  symphony-admin secrets verify
+  symphony-admin auth claude
+  symphony-admin auth codex
+  symphony-admin auth status
+
+Settable secret names:
+  github_project_token
+  github_worker_token
+  claude_oauth_token
+  openai_api_key
+
+Secret values are accepted only from a hidden terminal prompt or standard input.
+EOF
+}
+
+die() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$1" >&2
+  exit 1
+}
+
+validate_configuration() {
+  if [[ -n "${SYMPHONY_SECRETS_DIR:-}" && -n "${SYMPHONY_SECRETS_ROOT:-}" &&
+    "$SYMPHONY_SECRETS_DIR" != "$SYMPHONY_SECRETS_ROOT" ]]; then
+    die "SYMPHONY_SECRETS_DIR and deprecated SYMPHONY_SECRETS_ROOT disagree"
+  fi
+
+  [[ "$SECRETS_ROOT" == /* ]] || die "Symphony secrets directory must be an absolute path"
+  [[ -n "$CONTAINER_CLI" ]] || die "SYMPHONY_CONTAINER_CLI must not be empty"
+  [[ -n "$COMPOSE_PROJECT" ]] || die "SYMPHONY_COMPOSE_PROJECT must not be empty"
+  [[ "$SECRET_UID" =~ ^[0-9]+$ ]] || die "SYMPHONY_SECRET_UID must be numeric"
+  [[ "$SECRET_GID" =~ ^[0-9]+$ ]] || die "SYMPHONY_SECRET_GID must be numeric"
+  [[ "$WORKER_SERVICE" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] ||
+    die "SYMPHONY_WORKER_SERVICE contains invalid characters"
+  [[ "$VOLUME_INIT_SERVICE" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] ||
+    die "SYMPHONY_VOLUME_INIT_SERVICE contains invalid characters"
+}
+
+require_default_root_privileges() {
+  if [[ "$SECRETS_ROOT" == "$DEFAULT_SECRETS_ROOT" && "$EUID" -ne 0 ]]; then
+    die "secrets commands for $DEFAULT_SECRETS_ROOT must run as root"
+  fi
+}
+
+is_settable_secret() {
+  case "$1" in
+    github_project_token | github_worker_token | claude_oauth_token | openai_api_key) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_known_secret_file() {
+  case "$1" in
+    github_project_token | github_worker_token | claude_oauth_token | openai_api_key | \
+      worker_ssh_private_key | worker_ssh_authorized_key | \
+      worker_ssh_host_private_key | worker_ssh_host_public_key)
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+secret_path() {
+  local name=$1
+  is_known_secret_file "$name" || die "invalid secret name: $name"
+  printf '%s/%s\n' "$SECRETS_ROOT" "$name"
+}
+
+file_mode() {
+  local path=$1
+
+  if stat -c '%a' "$path" >/dev/null 2>&1; then
+    stat -c '%a' "$path"
+  else
+    stat -f '%Lp' "$path"
+  fi
+}
+
+file_uid() {
+  local path=$1
+
+  if stat -c '%u' "$path" >/dev/null 2>&1; then
+    stat -c '%u' "$path"
+  else
+    stat -f '%u' "$path"
+  fi
+}
+
+file_gid() {
+  local path=$1
+
+  if stat -c '%g' "$path" >/dev/null 2>&1; then
+    stat -c '%g' "$path"
+  else
+    stat -f '%g' "$path"
+  fi
+}
+
+set_secret_permissions() {
+  local path=$1
+  chown "$SECRET_UID:$SECRET_GID" "$path"
+  chmod 400 "$path"
+}
+
+assert_safe_existing_file() {
+  local path=$1
+
+  [[ ! -L "$path" ]] || die "refusing symbolic link: $path"
+  [[ -f "$path" ]] || die "expected a regular file: $path"
+}
+
+require_secrets_root() {
+  require_default_root_privileges
+  [[ ! -L "$SECRETS_ROOT" ]] || die "refusing symbolic-link secrets root: $SECRETS_ROOT"
+  [[ -d "$SECRETS_ROOT" ]] || die "secrets are not initialized; run '$PROGRAM_NAME secrets init'"
+}
+
+create_empty_file_if_missing() {
+  local name=$1
+  local destination
+  destination=$(secret_path "$name")
+
+  if [[ -e "$destination" || -L "$destination" ]]; then
+    assert_safe_existing_file "$destination"
+    set_secret_permissions "$destination"
+    return
+  fi
+
+  TEMP_PATH=$(mktemp "$SECRETS_ROOT/.${name}.XXXXXX")
+  set_secret_permissions "$TEMP_PATH"
+  if ! mv -n "$TEMP_PATH" "$destination"; then
+    die "could not create $name"
+  fi
+
+  if [[ -e "$TEMP_PATH" ]]; then
+    assert_safe_existing_file "$destination"
+    rm -f -- "$TEMP_PATH"
+  fi
+  TEMP_PATH=""
+}
+
+generate_worker_ssh_key() {
+  local private_key authorized_key
+  private_key=$(secret_path worker_ssh_private_key)
+  authorized_key=$(secret_path worker_ssh_authorized_key)
+
+  if [[ -e "$private_key" || -L "$private_key" ]]; then
+    assert_safe_existing_file "$private_key"
+    set_secret_permissions "$private_key"
+
+    if [[ ! -e "$authorized_key" && ! -L "$authorized_key" ]]; then
+      TEMP_PATH=$(mktemp "$SECRETS_ROOT/.worker_ssh_authorized_key.XXXXXX")
+      ssh-keygen -y -f "$private_key" >"$TEMP_PATH" 2>/dev/null ||
+        die "existing worker SSH private key is invalid"
+      set_secret_permissions "$TEMP_PATH"
+      mv -n "$TEMP_PATH" "$authorized_key"
+      if [[ -e "$TEMP_PATH" ]]; then
+        die "worker SSH authorized key appeared concurrently; refusing to replace it"
+      fi
+      TEMP_PATH=""
+    else
+      assert_safe_existing_file "$authorized_key"
+      set_secret_permissions "$authorized_key"
+    fi
+
+    verify_ssh_key_pair worker_ssh_private_key worker_ssh_authorized_key ||
+      die "existing worker SSH key pair is invalid"
+    return
+  fi
+
+  if [[ -e "$authorized_key" || -L "$authorized_key" ]]; then
+    die "worker SSH authorized key exists without its private key; restore or remove it before retrying"
+  fi
+
+  command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen is required to initialize worker access"
+  TEMP_KEY_DIR=$(mktemp -d "$SECRETS_ROOT/.worker-ssh-key.XXXXXX")
+  chmod 700 "$TEMP_KEY_DIR"
+
+  ssh-keygen \
+    -q \
+    -t ed25519 \
+    -N '' \
+    -C 'symphony-agent-worker' \
+    -f "$TEMP_KEY_DIR/key" \
+    >/dev/null
+  set_secret_permissions "$TEMP_KEY_DIR/key"
+  set_secret_permissions "$TEMP_KEY_DIR/key.pub"
+
+  if ! mv -n "$TEMP_KEY_DIR/key" "$private_key"; then
+    die "could not install worker SSH private key"
+  fi
+  if [[ -e "$TEMP_KEY_DIR/key" ]]; then
+    die "worker SSH private key appeared concurrently; refusing to replace it"
+  fi
+
+  if ! mv -n "$TEMP_KEY_DIR/key.pub" "$authorized_key"; then
+    die "could not install worker SSH authorized key"
+  fi
+  if [[ -e "$TEMP_KEY_DIR/key.pub" ]]; then
+    die "worker SSH authorized key appeared concurrently; refusing to replace it"
+  fi
+
+  rmdir -- "$TEMP_KEY_DIR"
+  TEMP_KEY_DIR=""
+}
+
+generate_worker_ssh_host_key() {
+  local private_key public_key
+  private_key=$(secret_path worker_ssh_host_private_key)
+  public_key=$(secret_path worker_ssh_host_public_key)
+
+  if [[ -e "$private_key" || -L "$private_key" ]]; then
+    assert_safe_existing_file "$private_key"
+    set_secret_permissions "$private_key"
+
+    if [[ ! -e "$public_key" && ! -L "$public_key" ]]; then
+      TEMP_PATH=$(mktemp "$SECRETS_ROOT/.worker_ssh_host_public_key.XXXXXX")
+      ssh-keygen -y -f "$private_key" >"$TEMP_PATH" 2>/dev/null ||
+        die "existing worker SSH host private key is invalid"
+      set_secret_permissions "$TEMP_PATH"
+      mv -n "$TEMP_PATH" "$public_key"
+      if [[ -e "$TEMP_PATH" ]]; then
+        die "worker SSH host public key appeared concurrently; refusing to replace it"
+      fi
+      TEMP_PATH=""
+    else
+      assert_safe_existing_file "$public_key"
+      set_secret_permissions "$public_key"
+    fi
+
+    verify_ssh_key_pair worker_ssh_host_private_key worker_ssh_host_public_key ||
+      die "existing worker SSH host key pair is invalid"
+    return
+  fi
+
+  if [[ -e "$public_key" || -L "$public_key" ]]; then
+    die "worker SSH host public key exists without its private key; restore or remove it before retrying"
+  fi
+
+  command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen is required to initialize worker access"
+  TEMP_KEY_DIR=$(mktemp -d "$SECRETS_ROOT/.worker-ssh-host-key.XXXXXX")
+  chmod 700 "$TEMP_KEY_DIR"
+
+  ssh-keygen \
+    -q \
+    -t ed25519 \
+    -N '' \
+    -C 'symphony-agent-worker-host' \
+    -f "$TEMP_KEY_DIR/key" \
+    >/dev/null
+  set_secret_permissions "$TEMP_KEY_DIR/key"
+  set_secret_permissions "$TEMP_KEY_DIR/key.pub"
+
+  if ! mv -n "$TEMP_KEY_DIR/key" "$private_key"; then
+    die "could not install worker SSH host private key"
+  fi
+  if [[ -e "$TEMP_KEY_DIR/key" ]]; then
+    die "worker SSH host private key appeared concurrently; refusing to replace it"
+  fi
+
+  if ! mv -n "$TEMP_KEY_DIR/key.pub" "$public_key"; then
+    die "could not install worker SSH host public key"
+  fi
+  if [[ -e "$TEMP_KEY_DIR/key.pub" ]]; then
+    die "worker SSH host public key appeared concurrently; refusing to replace it"
+  fi
+
+  rmdir -- "$TEMP_KEY_DIR"
+  TEMP_KEY_DIR=""
+}
+
+secrets_init() {
+  require_default_root_privileges
+
+  if [[ -L "$SECRETS_ROOT" ]]; then
+    die "refusing symbolic-link secrets root: $SECRETS_ROOT"
+  fi
+  if [[ -e "$SECRETS_ROOT" && ! -d "$SECRETS_ROOT" ]]; then
+    die "secrets root exists but is not a directory: $SECRETS_ROOT"
+  fi
+
+  install -d -m 700 "$SECRETS_ROOT"
+  chmod 700 "$SECRETS_ROOT"
+
+  create_empty_file_if_missing github_project_token
+  create_empty_file_if_missing github_worker_token
+  create_empty_file_if_missing claude_oauth_token
+  create_empty_file_if_missing openai_api_key
+  generate_worker_ssh_key
+  generate_worker_ssh_host_key
+
+  printf 'Initialized secrets directory: %s\n' "$SECRETS_ROOT"
+  printf 'Generated worker SSH key material if it was not already present.\n'
+}
+
+read_secret_from_stdin() {
+  local value extra
+
+  if ! IFS= read -r value; then
+    die "standard input must contain one newline-terminated secret"
+  fi
+  if IFS= read -r extra || [[ -n "${extra:-}" ]]; then
+    unset value extra
+    die "standard input must contain exactly one line"
+  fi
+  [[ -n "$value" ]] || die "secret must not be empty"
+
+  SECRET_VALUE=$value
+  unset value extra
+}
+
+restore_terminal_echo() {
+  if [[ "$TTY_ECHO_DISABLED" -eq 1 ]]; then
+    stty echo </dev/tty >/dev/null 2>&1 || true
+    TTY_ECHO_DISABLED=0
+  fi
+}
+
+read_secret_from_terminal() {
+  local name=$1
+  local value read_status=0
+
+  [[ -r /dev/tty && -w /dev/tty ]] ||
+    die "no controlling terminal; use --stdin"
+
+  printf 'Enter %s: ' "$name" >/dev/tty
+  TTY_ECHO_DISABLED=1
+  if ! stty -echo </dev/tty; then
+    TTY_ECHO_DISABLED=0
+    die "could not disable terminal echo; use --stdin"
+  fi
+
+  IFS= read -r value </dev/tty || read_status=$?
+  restore_terminal_echo
+  printf '\n' >/dev/tty
+
+  [[ "$read_status" -eq 0 ]] || die "secret input was interrupted or incomplete"
+  [[ -n "$value" ]] || die "secret must not be empty"
+
+  SECRET_VALUE=$value
+  unset value
+}
+
+write_secret_atomically() {
+  local name=$1
+  local destination
+  destination=$(secret_path "$name")
+
+  TEMP_PATH=$(mktemp "$SECRETS_ROOT/.${name}.XXXXXX")
+  printf '%s\n' "$SECRET_VALUE" >"$TEMP_PATH"
+  unset SECRET_VALUE
+  set_secret_permissions "$TEMP_PATH"
+
+  mv -f "$TEMP_PATH" "$destination"
+  TEMP_PATH=""
+}
+
+secrets_set() {
+  local name=${1:-}
+  local input_mode=${2:-terminal}
+
+  [[ -n "$name" ]] || die "secrets set requires a secret name"
+  is_settable_secret "$name" || die "invalid or non-settable secret name: $name"
+  case "$input_mode" in
+    terminal | --stdin) ;;
+    *) die "unexpected argument: $input_mode" ;;
+  esac
+  [[ $# -le 2 ]] || die "too many arguments for secrets set"
+
+  require_secrets_root
+  if [[ "$input_mode" == "--stdin" ]]; then
+    read_secret_from_stdin
+  else
+    read_secret_from_terminal "$name"
+  fi
+
+  write_secret_atomically "$name"
+  printf 'Updated %s.\n' "$name"
+}
+
+secret_file_state() {
+  local name=$1
+  local path
+  path=$(secret_path "$name")
+
+  if [[ -L "$path" || ( -e "$path" && ! -f "$path" ) ]]; then
+    printf 'invalid'
+  elif [[ ! -e "$path" ]]; then
+    printf 'missing'
+  elif [[ ! -s "$path" ]]; then
+    printf 'unset'
+  else
+    printf 'set'
+  fi
+}
+
+secrets_list() {
+  local name state
+  require_secrets_root
+
+  for name in \
+    github_project_token \
+    github_worker_token \
+    claude_oauth_token \
+    openai_api_key \
+    worker_ssh_private_key \
+    worker_ssh_authorized_key \
+    worker_ssh_host_private_key \
+    worker_ssh_host_public_key; do
+    state=$(secret_file_state "$name")
+    printf '%-28s %s\n' "$name" "$state"
+  done
+}
+
+verify_file_security() {
+  local name=$1
+  local required=$2
+  local path mode uid gid
+  path=$(secret_path "$name")
+
+  if [[ ! -e "$path" || -L "$path" || ! -f "$path" ]]; then
+    printf 'ERROR: %s is missing or is not a regular file.\n' "$name" >&2
+    return 1
+  fi
+
+  mode=$(file_mode "$path")
+  if [[ "$mode" != "400" ]]; then
+    printf 'ERROR: %s has mode %s; expected 400.\n' "$name" "$mode" >&2
+    return 1
+  fi
+
+  uid=$(file_uid "$path")
+  if [[ "$uid" != "$SECRET_UID" ]]; then
+    printf 'ERROR: %s is owned by uid %s; expected %s.\n' "$name" "$uid" "$SECRET_UID" >&2
+    return 1
+  fi
+
+  gid=$(file_gid "$path")
+  if [[ "$gid" != "$SECRET_GID" ]]; then
+    printf 'ERROR: %s is owned by gid %s; expected %s.\n' "$name" "$gid" "$SECRET_GID" >&2
+    return 1
+  fi
+
+  if [[ "$required" == "required" && ! -s "$path" ]]; then
+    printf 'ERROR: required secret %s is unset.\n' "$name" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+verify_ssh_key_pair() {
+  local private_name=$1
+  local public_name=$2
+  local private_key public_key derived_key configured_key
+  private_key=$(secret_path "$private_name")
+  public_key=$(secret_path "$public_name")
+
+  derived_key=$(ssh-keygen -y -f "$private_key" 2>/dev/null | awk 'NR == 1 { print $1 " " $2; exit }') || {
+    printf 'ERROR: %s is not a valid SSH private key.\n' "$private_name" >&2
+    return 1
+  }
+  configured_key=$(awk 'NR == 1 { print $1 " " $2; exit }' "$public_key")
+
+  if [[ "$derived_key" != "$configured_key" ]]; then
+    printf 'ERROR: %s and %s do not match.\n' "$private_name" "$public_name" >&2
+    return 1
+  fi
+}
+
+secrets_verify() {
+  local failed=0 mode uid
+  require_secrets_root
+
+  mode=$(file_mode "$SECRETS_ROOT")
+  if [[ "$mode" != "700" ]]; then
+    printf 'ERROR: secrets directory has mode %s; expected 700.\n' "$mode" >&2
+    failed=1
+  fi
+
+  uid=$(file_uid "$SECRETS_ROOT")
+  if [[ "$uid" != "$EUID" ]]; then
+    printf 'ERROR: secrets directory is owned by uid %s; expected %s.\n' "$uid" "$EUID" >&2
+    failed=1
+  fi
+
+  verify_file_security github_project_token required || failed=1
+  verify_file_security github_worker_token required || failed=1
+  verify_file_security worker_ssh_private_key required || failed=1
+  verify_file_security worker_ssh_authorized_key required || failed=1
+  verify_file_security worker_ssh_host_private_key required || failed=1
+  verify_file_security worker_ssh_host_public_key required || failed=1
+  verify_file_security claude_oauth_token optional || failed=1
+  verify_file_security openai_api_key optional || failed=1
+
+  if [[ "$failed" -eq 0 ]]; then
+    verify_ssh_key_pair worker_ssh_private_key worker_ssh_authorized_key || failed=1
+    verify_ssh_key_pair worker_ssh_host_private_key worker_ssh_host_public_key || failed=1
+  fi
+
+  if [[ "$failed" -ne 0 ]]; then
+    return 1
+  fi
+
+  printf 'Secrets verification passed. Optional Claude/OpenAI credentials may be unset when using persistent login volumes.\n'
+}
+
+compose_run() {
+  local -a compose_arguments
+  compose_arguments=(compose)
+
+  if [[ -f "$DEPLOYMENT_ENV_FILE" && ! -L "$DEPLOYMENT_ENV_FILE" ]]; then
+    compose_arguments+=(--env-file "$DEPLOYMENT_ENV_FILE")
+  fi
+
+  compose_arguments+=(
+    --project-name "$COMPOSE_PROJECT"
+    --file "$COMPOSE_FILE"
+    run --rm --no-deps
+  )
+
+  "$CONTAINER_CLI" "${compose_arguments[@]}" "$VOLUME_INIT_SERVICE"
+  "$CONTAINER_CLI" "${compose_arguments[@]}" "$@"
+}
+
+auth_claude() {
+  compose_run "$WORKER_SERVICE" claude auth login
+}
+
+auth_codex() {
+  compose_run "$WORKER_SERVICE" codex login --device-auth
+}
+
+auth_status() {
+  local failed=0
+
+  printf 'Claude authentication:\n'
+  compose_run "$WORKER_SERVICE" claude auth status || failed=1
+  printf '\nCodex authentication:\n'
+  compose_run "$WORKER_SERVICE" codex login status || failed=1
+
+  return "$failed"
+}
+
+main() {
+  local area=${1:-}
+  local action=${2:-}
+  validate_configuration
+
+  case "$area:$action" in
+    secrets:init)
+      [[ $# -eq 2 ]] || die "secrets init takes no arguments"
+      secrets_init
+      ;;
+    secrets:set)
+      shift 2
+      secrets_set "$@"
+      ;;
+    secrets:list)
+      [[ $# -eq 2 ]] || die "secrets list takes no arguments"
+      secrets_list
+      ;;
+    secrets:verify)
+      [[ $# -eq 2 ]] || die "secrets verify takes no arguments"
+      secrets_verify
+      ;;
+    auth:claude)
+      [[ $# -eq 2 ]] || die "auth claude takes no arguments"
+      auth_claude
+      ;;
+    auth:codex)
+      [[ $# -eq 2 ]] || die "auth codex takes no arguments"
+      auth_codex
+      ;;
+    auth:status)
+      [[ $# -eq 2 ]] || die "auth status takes no arguments"
+      auth_status
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

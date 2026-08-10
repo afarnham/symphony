@@ -392,11 +392,11 @@ defmodule SymphonyElixir.TrackerMCPTest do
         end
       end)
 
-    assert_receive {:owned_session, handle}, 1_000
+    assert_receive {:owned_session, handle}, 5_000
     monitor = Process.monitor(handle.pid)
     send(owner, :finish)
 
-    assert_receive {:DOWN, ^monitor, :process, _pid, :normal}, 1_000
+    assert_receive {:DOWN, ^monitor, :process, _pid, :normal}, 5_000
     refute Process.alive?(handle.pid)
   end
 

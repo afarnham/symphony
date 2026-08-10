@@ -1,0 +1,167 @@
+name: symphony
+
+services:
+  volume-init:
+    image: ${SYMPHONY_IMAGE:-ghcr.io/ghw-consulting/symphony@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+    pull_policy: missing
+    user: "0:0"
+    working_dir: /
+    entrypoint: ["/usr/local/bin/symphony-volume-init"]
+    restart: "no"
+    read_only: true
+    network_mode: none
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.25
+    volumes:
+      - symphony-workspaces:/volumes/workspaces
+      - symphony-claude-auth:/volumes/claude-auth
+      - symphony-codex-auth:/volumes/codex-auth
+      - symphony-worker-cache:/volumes/worker-cache
+      - symphony-worker-local:/volumes/worker-local
+      - symphony-logs:/volumes/logs
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=1m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    logging:
+      driver: local
+      options:
+        max-size: ${SYMPHONY_LOG_MAX_SIZE:-10m}
+        max-file: "${SYMPHONY_LOG_MAX_FILES:-5}"
+
+  agent-worker:
+    image: ${SYMPHONY_WORKER_IMAGE:-ghcr.io/ghw-consulting/symphony-agent-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+    pull_policy: missing
+    restart: unless-stopped
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+    read_only: true
+    environment:
+      GH_CONFIG_DIR: /tmp/symphony-gh
+      HOME: /home/worker
+      NPM_CONFIG_CACHE: /home/worker/.cache/npm
+      PNPM_HOME: /home/worker/.local/share/pnpm
+      XDG_CACHE_HOME: /home/worker/.cache
+      XDG_DATA_HOME: /home/worker/.local/share
+    pids_limit: ${SYMPHONY_WORKER_PIDS_LIMIT:-512}
+    mem_limit: ${SYMPHONY_WORKER_MEM_LIMIT:-8g}
+    cpus: ${SYMPHONY_WORKER_CPUS:-4.0}
+    volumes:
+      - symphony-workspaces:/workspaces
+      - symphony-claude-auth:/home/worker/.claude
+      - symphony-codex-auth:/home/worker/.codex
+      - symphony-worker-cache:/home/worker/.cache
+      - symphony-worker-local:/home/worker/.local
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${SYMPHONY_WORKER_TMPFS_SIZE:-1g},mode=1777
+    secrets:
+      - github_worker_token
+      - worker_ssh_authorized_key
+      - worker_ssh_host_private_key
+      - claude_oauth_token
+      - openai_api_key
+    networks:
+      - symphony-private
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/symphony-worker-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: local
+      options:
+        max-size: ${SYMPHONY_LOG_MAX_SIZE:-10m}
+        max-file: "${SYMPHONY_LOG_MAX_FILES:-5}"
+
+  symphony:
+    image: ${SYMPHONY_IMAGE:-ghcr.io/ghw-consulting/symphony@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+    pull_policy: missing
+    restart: unless-stopped
+    read_only: true
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+      agent-worker:
+        condition: service_healthy
+    environment:
+      HOME: /home/symphony
+      SYMPHONY_LOGS_ROOT: /var/log/symphony
+      SYMPHONY_PORT: "4000"
+      SYMPHONY_SSH_CONFIG: /tmp/symphony-ssh/config
+      SYMPHONY_WORKFLOW_PATH: /etc/symphony/WORKFLOW.md
+    pids_limit: ${SYMPHONY_PIDS_LIMIT:-256}
+    mem_limit: ${SYMPHONY_MEM_LIMIT:-2g}
+    cpus: ${SYMPHONY_CPUS:-2.0}
+    ports:
+      - "${SYMPHONY_BIND_ADDRESS:-127.0.0.1}:${SYMPHONY_PORT:-4000}:4000"
+    volumes:
+      - type: bind
+        source: ${SYMPHONY_WORKFLOW_FILE:-/etc/symphony/WORKFLOW.md}
+        target: /etc/symphony/WORKFLOW.md
+        read_only: true
+      - symphony-logs:/var/log/symphony
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${SYMPHONY_TMPFS_SIZE:-256m},mode=1777
+    secrets:
+      - github_project_token
+      - worker_ssh_private_key
+      - worker_ssh_host_public_key
+    networks:
+      - symphony-private
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/symphony-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: local
+      options:
+        max-size: ${SYMPHONY_LOG_MAX_SIZE:-10m}
+        max-file: "${SYMPHONY_LOG_MAX_FILES:-5}"
+
+networks:
+  symphony-private:
+    driver: bridge
+    internal: false
+
+volumes:
+  symphony-workspaces:
+  symphony-claude-auth:
+  symphony-codex-auth:
+  symphony-worker-cache:
+  symphony-worker-local:
+  symphony-logs:
+
+secrets:
+  github_project_token:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/github_project_token
+  github_worker_token:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/github_worker_token
+  worker_ssh_private_key:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/worker_ssh_private_key
+  worker_ssh_authorized_key:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/worker_ssh_authorized_key
+  worker_ssh_host_private_key:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/worker_ssh_host_private_key
+  worker_ssh_host_public_key:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/worker_ssh_host_public_key
+  claude_oauth_token:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/claude_oauth_token
+  openai_api_key:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/openai_api_key

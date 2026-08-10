@@ -53,7 +53,7 @@ defmodule SymphonyElixir.TrackerToolBrokerTest do
              "linear_graphql"
            ]
 
-    assert binding.secret_environment_names == ["LINEAR_API_KEY"]
+    assert binding.secret_environment_names == ["LINEAR_API_KEY", "LINEAR_API_KEY_FILE"]
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
 

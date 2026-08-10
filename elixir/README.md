@@ -75,6 +75,11 @@ mise exec -- mix build
 mise exec -- ./bin/symphony ./WORKFLOW.md
 ```
 
+For a persistent installation on a Linux VM, use the repository's split orchestrator/worker
+container profile instead of installing Elixir and the agent CLIs on the host. The
+[Linux container deployment runbook](../docs/linux-container-deployment.md) covers runtime secrets,
+Claude and Codex authentication, systemd startup, smoke testing, upgrades, and recovery.
+
 ## Burrito releases
 
 Symphony ships self-contained executables built with

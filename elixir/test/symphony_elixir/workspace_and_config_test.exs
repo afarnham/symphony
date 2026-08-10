@@ -1246,9 +1246,38 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     config = Config.settings!()
     assert config.tracker.api_key == api_key
     assert config.tracker.provider["api_key"] == "$#{api_key_env_var}"
-    assert config.tracker.secret_environment_names == ["LINEAR_API_KEY", api_key_env_var]
+
+    assert config.tracker.secret_environment_names == [
+             "LINEAR_API_KEY",
+             "LINEAR_API_KEY_FILE",
+             api_key_env_var,
+             api_key_env_var <> "_FILE"
+           ]
+
     assert config.workspace.root == Path.expand(workspace_root)
     assert config.codex.command == "#{codex_bin} app-server"
+  end
+
+  test "config resolves a Linear API key from an absolute file reference" do
+    path =
+      Path.join(System.tmp_dir!(), "symphony-linear-token-#{System.unique_integer([:positive])}")
+
+    File.write!(path, "file-backed-linear-token\n")
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, settings} =
+             Schema.parse(%{
+               tracker: %{
+                 kind: "linear",
+                 provider: %{
+                   api_key: "file://#{path}",
+                   project_slug: "provider-project"
+                 }
+               }
+             })
+
+    assert settings.tracker.api_key == "file-backed-linear-token"
+    assert settings.tracker.provider["api_key"] == "file://#{path}"
   end
 
   test "schema preserves adapter-owned provider config while keeping linear aliases compatible" do
@@ -1268,7 +1297,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert settings.tracker.endpoint == "https://linear.example.test/graphql"
     assert settings.tracker.api_key == "provider-token"
     assert settings.tracker.project_slug == "provider-project"
-    assert settings.tracker.secret_environment_names == ["LINEAR_API_KEY"]
+    assert settings.tracker.secret_environment_names == ["LINEAR_API_KEY", "LINEAR_API_KEY_FILE"]
 
     assert settings.tracker.provider == %{
              "endpoint" => "https://linear.example.test/graphql",
@@ -1277,6 +1306,39 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              "assignee" => nil,
              "extra" => %{"team" => "platform"}
            }
+  end
+
+  test "schema preserves legacy Linear assignee environment fallback behavior" do
+    custom_name = "SYMPHONY_LINEAR_ASSIGNEE_#{System.unique_integer([:positive])}"
+    previous_custom = System.get_env(custom_name)
+    previous_default = System.get_env("LINEAR_ASSIGNEE")
+
+    on_exit(fn ->
+      restore_env(custom_name, previous_custom)
+      restore_env("LINEAR_ASSIGNEE", previous_default)
+    end)
+
+    parse_assignee = fn ->
+      Schema.parse(%{
+        tracker: %{
+          kind: "linear",
+          provider: %{api_key: "token", project_slug: "project", assignee: "$#{custom_name}"}
+        }
+      })
+    end
+
+    System.delete_env(custom_name)
+    System.put_env("LINEAR_ASSIGNEE", "fallback@example.com")
+    assert {:ok, settings} = parse_assignee.()
+    assert settings.tracker.assignee == "fallback@example.com"
+
+    System.put_env(custom_name, "")
+    assert {:ok, settings} = parse_assignee.()
+    assert settings.tracker.assignee == nil
+
+    System.put_env(custom_name, "configured@example.com")
+    assert {:ok, settings} = parse_assignee.()
+    assert settings.tracker.assignee == "configured@example.com"
   end
 
   test "linear adapter rejects invalid provider values without crashing config parsing" do

@@ -83,7 +83,12 @@ defmodule SymphonyElixir.Jira.AdapterTest do
     assert {:error, :missing_jira_project_key} =
              JiraClient.validate_settings(tracker_settings(%{"project_key" => 123}))
 
-    assert JiraClient.secret_environment_names(tracker_settings(%{"api_token" => "$SYMPHONY_JIRA_TOKEN"})) == ["JIRA_API_TOKEN", "SYMPHONY_JIRA_TOKEN"]
+    assert JiraClient.secret_environment_names(tracker_settings(%{"api_token" => "$SYMPHONY_JIRA_TOKEN"})) == [
+             "JIRA_API_TOKEN",
+             "JIRA_API_TOKEN_FILE",
+             "SYMPHONY_JIRA_TOKEN",
+             "SYMPHONY_JIRA_TOKEN_FILE"
+           ]
   end
 
   test "client normalizes Jira issue fields and projects ADF description text" do
@@ -521,7 +526,14 @@ defmodule SymphonyElixir.Jira.AdapterTest do
     binding = Tracker.bind_agent_tools()
 
     assert binding.adapter == JiraAdapter
-    assert binding.secret_environment_names == ["JIRA_API_TOKEN", token_env]
+
+    assert binding.secret_environment_names == [
+             "JIRA_API_TOKEN",
+             "JIRA_API_TOKEN_FILE",
+             token_env,
+             token_env <> "_FILE"
+           ]
+
     assert [%{"name" => "jira_rest"}] = binding.tool_specs
     assert :ok = Config.validate!()
   end

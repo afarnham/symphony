@@ -5,6 +5,7 @@ defmodule SymphonyElixir.GitLab.Client do
 
   require Logger
   alias SymphonyElixir.Config
+  alias SymphonyElixir.Secret
   alias SymphonyElixir.Tracker.Issue
 
   @default_api_url "https://gitlab.com/api/v4"
@@ -19,7 +20,8 @@ defmodule SymphonyElixir.GitLab.Client do
   def secret_environment_names(tracker_settings) do
     provider = provider_settings(tracker_settings)
 
-    ["GITLAB_PAT", "GITLAB_ACCESS_TOKEN" | env_reference_names([provider["api_key"]])]
+    (Secret.environment_names(["GITLAB_PAT", "GITLAB_ACCESS_TOKEN"]) ++
+       Secret.reference_environment_names([provider["api_key"]]))
     |> Enum.uniq()
   end
 
@@ -293,7 +295,7 @@ defmodule SymphonyElixir.GitLab.Client do
     api_url = provider["api_url"] || @default_api_url
     project_path = resolve_setting(provider["project_path"], System.get_env("GITLAB_PROJECT_PATH"))
 
-    api_key = resolve_setting(provider["api_key"], System.get_env("GITLAB_PAT"))
+    api_key = Secret.resolve(provider["api_key"], "GITLAB_PAT")
 
     cond do
       not valid_api_url?(api_url) ->
@@ -341,13 +343,6 @@ defmodule SymphonyElixir.GitLab.Client do
   end
 
   defp normalize_string(_value), do: nil
-
-  defp env_reference_names(values) do
-    Enum.flat_map(values, fn
-      "$" <> env_name when is_binary(env_name) -> if valid_env_name?(env_name), do: [env_name], else: []
-      _ -> []
-    end)
-  end
 
   defp valid_env_name?(name), do: String.match?(name, ~r/^[A-Za-z_][A-Za-z0-9_]*$/)
 

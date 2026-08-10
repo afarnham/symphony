@@ -332,7 +332,12 @@ defmodule SymphonyElixir.GitHubProject.AdapterTest do
 
     assert_receive {:github_api, "POST", "/repos/GHW-Consulting/app-tastemap/issues/141/comments", %{}, %{"body" => "hello"}, [tracker_settings: ^tracker_settings]}
 
-    assert Adapter.secret_environment_names(put_provider(tracker_settings, "token", "$SYMPHONY_PROJECT_TOKEN")) == ["GITHUB_TOKEN", "SYMPHONY_PROJECT_TOKEN"]
+    assert Adapter.secret_environment_names(put_provider(tracker_settings, "token", "$SYMPHONY_PROJECT_TOKEN")) == [
+             "GITHUB_TOKEN",
+             "GITHUB_TOKEN_FILE",
+             "SYMPHONY_PROJECT_TOKEN",
+             "SYMPHONY_PROJECT_TOKEN_FILE"
+           ]
   end
 
   test "registers github_project and preserves its workflow configuration" do
@@ -365,7 +370,14 @@ defmodule SymphonyElixir.GitHubProject.AdapterTest do
 
     binding = Tracker.bind_agent_tools()
     assert binding.adapter == Adapter
-    assert binding.secret_environment_names == ["GITHUB_TOKEN", token_env]
+
+    assert binding.secret_environment_names == [
+             "GITHUB_TOKEN",
+             "GITHUB_TOKEN_FILE",
+             token_env,
+             token_env <> "_FILE"
+           ]
+
     assert [%{"name" => "github_api"}] = binding.tool_specs
   end
 

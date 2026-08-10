@@ -93,7 +93,14 @@ defmodule SymphonyElixir.GitLab.AdapterTest do
     assert {:error, :invalid_gitlab_api_url} =
              GitLabClient.validate_settings(tracker_settings(%{"api_url" => "http://gitlab.com/api/v4"}))
 
-    assert GitLabClient.secret_environment_names(tracker_settings(%{"api_key" => "$SYMPHONY_GITLAB_TOKEN"})) == ["GITLAB_PAT", "GITLAB_ACCESS_TOKEN", "SYMPHONY_GITLAB_TOKEN"]
+    assert GitLabClient.secret_environment_names(tracker_settings(%{"api_key" => "$SYMPHONY_GITLAB_TOKEN"})) == [
+             "GITLAB_PAT",
+             "GITLAB_PAT_FILE",
+             "GITLAB_ACCESS_TOKEN",
+             "GITLAB_ACCESS_TOKEN_FILE",
+             "SYMPHONY_GITLAB_TOKEN",
+             "SYMPHONY_GITLAB_TOKEN_FILE"
+           ]
 
     assert {:ok, []} =
              GitLabClient.fetch_issues_by_states_for_test(
@@ -423,7 +430,16 @@ defmodule SymphonyElixir.GitLab.AdapterTest do
     binding = Tracker.bind_agent_tools()
 
     assert binding.adapter == GitLabAdapter
-    assert binding.secret_environment_names == ["GITLAB_PAT", "GITLAB_ACCESS_TOKEN", token_env]
+
+    assert binding.secret_environment_names == [
+             "GITLAB_PAT",
+             "GITLAB_PAT_FILE",
+             "GITLAB_ACCESS_TOKEN",
+             "GITLAB_ACCESS_TOKEN_FILE",
+             token_env,
+             token_env <> "_FILE"
+           ]
+
     assert [%{"name" => "gitlab_api"}] = binding.tool_specs
     assert :ok = Config.validate!()
   end

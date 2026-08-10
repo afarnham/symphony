@@ -1,0 +1,14 @@
+**
+!Dockerfile
+!elixir/
+!elixir/mix.exs
+!elixir/mix.lock
+!elixir/config/
+!elixir/config/**
+!elixir/lib/
+!elixir/lib/**
+!elixir/priv/
+!elixir/priv/**
+!docker/
+!docker/orchestrator/
+!docker/orchestrator/*.sh
