@@ -852,6 +852,59 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              Orchestrator.revalidate_issue_for_dispatch_for_test(stale_issue, fetcher)
   end
 
+  test "dispatch claim confirms the configured working state before continuing" do
+    ready_issue = %Issue{
+      id: "project-item-1",
+      identifier: "GH-101",
+      title: "Ready project item",
+      state: "Ready",
+      dispatchable: true
+    }
+
+    transitioner = fn issue, state ->
+      send(self(), {:claim_transition, issue.id, state})
+      {:ok, %{issue | state: state}}
+    end
+
+    assert {:ok, %Issue{state: "In Progress"} = claimed_issue} =
+             Orchestrator.claim_issue_for_dispatch_for_test(
+               ready_issue,
+               "In Progress",
+               transitioner
+             )
+
+    assert claimed_issue.id == "project-item-1"
+    assert_receive {:claim_transition, "project-item-1", "In Progress"}
+  end
+
+  test "dispatch claim is idempotent and surfaces transition failures" do
+    working_issue = %Issue{
+      id: "project-item-2",
+      identifier: "GH-102",
+      title: "Working project item",
+      state: "In Progress",
+      dispatchable: true
+    }
+
+    no_transition = fn _issue, _state -> flunk("already-working item should not transition") end
+
+    assert {:ok, ^working_issue} =
+             Orchestrator.claim_issue_for_dispatch_for_test(
+               working_issue,
+               " in progress ",
+               no_transition
+             )
+
+    failure = fn _issue, _state -> {:error, :forbidden} end
+
+    assert {:error, {:claim_transition_failed, :forbidden}} =
+             Orchestrator.claim_issue_for_dispatch_for_test(
+               %{working_issue | state: "Ready"},
+               "In Progress",
+               failure
+             )
+  end
+
   test "workspace remove returns error information for missing directory" do
     random_path =
       Path.join(

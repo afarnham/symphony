@@ -16,8 +16,13 @@ defmodule SymphonyElixir.CoreTest do
     assert config.polling.interval_ms == 30_000
     assert config.tracker.active_states == ["Todo", "In Progress"]
     assert config.tracker.terminal_states == ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
+    assert config.tracker.working_state == nil
+    assert config.tracker.completion_state == nil
     assert config.tracker.assignee == nil
+    assert config.agent.backend == "codex"
     assert config.agent.max_turns == 20
+    assert config.claude.command == "claude"
+    assert config.claude.permission_mode == "default"
 
     write_workflow_file!(Workflow.workflow_file_path(), poll_interval_ms: "invalid")
 
@@ -33,6 +38,45 @@ defmodule SymphonyElixir.CoreTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), max_turns: 5)
     assert Config.settings!().agent.max_turns == 5
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_backend: "claude")
+    assert Config.settings!().agent.backend == "claude"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_backend: "other")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.backend"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      agent_backend: "claude",
+      claude_command: "claude-custom",
+      claude_model: "opus",
+      claude_permission_mode: "bypassPermissions",
+      claude_turn_timeout_ms: 90_000,
+      claude_read_timeout_ms: 2_000,
+      claude_stall_timeout_ms: 10_000
+    )
+
+    config = Config.settings!()
+    assert config.claude.command == "claude-custom"
+    assert config.claude.model == "opus"
+    assert config.claude.permission_mode == "bypassPermissions"
+    assert config.claude.turn_timeout_ms == 90_000
+    assert config.claude.read_timeout_ms == 2_000
+    assert config.claude.stall_timeout_ms == 10_000
+    assert :ok = Config.validate_settings(config)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_working_state: "In Progress",
+      tracker_completion_state: "In Review"
+    )
+
+    config = Config.settings!()
+    assert config.tracker.working_state == "In Progress"
+    assert config.tracker.completion_state == "In Review"
+
+    write_workflow_file!(Workflow.workflow_file_path(), claude_permission_mode: "unsafe")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "claude.permission_mode"
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: "Todo,  Review,")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
@@ -1048,6 +1092,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    retry_requested_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :normal})
     Process.sleep(50)
     state = :sys.get_state(pid)
@@ -1056,7 +1101,7 @@ defmodule SymphonyElixir.CoreTest do
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert_scheduled_delay_in_range(due_at_ms, retry_requested_at_ms, 1_000, 5_000)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -1072,6 +1117,8 @@ defmodule SymphonyElixir.CoreTest do
     end)
 
     initial_state = :sys.get_state(pid)
+    settings_snapshot = Config.settings!()
+    {:ok, tracker_binding} = SymphonyElixir.Tracker.bind_config(settings_snapshot.tracker)
 
     running_entry = %{
       pid: self(),
@@ -1079,7 +1126,9 @@ defmodule SymphonyElixir.CoreTest do
       identifier: "MT-559",
       retry_attempt: 2,
       issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
-      started_at: DateTime.utc_now()
+      started_at: DateTime.utc_now(),
+      settings_snapshot: settings_snapshot,
+      tracker_binding: tracker_binding
     }
 
     :sys.replace_state(pid, fn _ ->
@@ -1089,14 +1138,25 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    write_workflow_file!(Workflow.workflow_file_path(), max_retry_backoff_ms: 5_000)
+    assert Config.settings!().agent.max_retry_backoff_ms == 5_000
+
+    retry_requested_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
+    assert %{
+             attempt: 3,
+             due_at_ms: due_at_ms,
+             identifier: "MT-559",
+             error: "agent exited: :boom",
+             settings_snapshot: ^settings_snapshot,
+             tracker_binding: ^tracker_binding
+           } =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert_scheduled_delay_in_range(due_at_ms, retry_requested_at_ms, 40_000, 45_000)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -1128,6 +1188,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    retry_requested_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
@@ -1135,7 +1196,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 9_000, 10_500)
+    assert_scheduled_delay_in_range(due_at_ms, retry_requested_at_ms, 10_000, 15_000)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
@@ -1255,11 +1316,16 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.select_worker_host_for_test(state, "worker-a") == "worker-a"
   end
 
-  defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
-    remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
+  defp assert_scheduled_delay_in_range(
+         due_at_ms,
+         retry_requested_at_ms,
+         min_delay_ms,
+         max_delay_ms
+       ) do
+    scheduled_delay_ms = due_at_ms - retry_requested_at_ms
 
-    assert remaining_ms >= min_remaining_ms
-    assert remaining_ms <= max_remaining_ms
+    assert scheduled_delay_ms >= min_delay_ms
+    assert scheduled_delay_ms <= max_delay_ms
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
@@ -1693,15 +1759,17 @@ defmodule SymphonyElixir.CoreTest do
                  issue_state_fetcher: fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
                )
 
-      assert_receive {:codex_worker_update, "issue-live-updates",
-                      %{
-                        event: :session_started,
+      assert_receive {:agent_worker_update, "issue-live-updates",
+                      %SymphonyElixir.AgentEvent{
+                        kind: :turn_started,
+                        backend: :codex,
                         timestamp: %DateTime{},
-                        session_id: session_id
+                        session_id: "thread-live",
+                        turn_id: "turn-live"
                       }},
                      500
 
-      assert session_id == "thread-live-turn-live"
+      refute_receive {:codex_worker_update, "issue-live-updates", _}, 20
     after
       File.rm_rf(test_root)
     end

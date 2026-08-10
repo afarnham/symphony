@@ -13,27 +13,28 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 
 ## How it works
 
-1. Polls the configured tracker for candidate work (included adapters: Linear, GitHub Issues, Jira
-   Cloud, Asana, and GitLab)
+1. Polls the configured tracker for candidate work (included adapters: Linear, GitHub Issues,
+   GitHub Projects, Jira Cloud, Asana, and GitLab)
 2. Creates a workspace per issue
-3. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
-   workspace
-4. Sends a workflow prompt to Codex
-5. Keeps Codex working on the issue until the work is done
+3. Launches the selected Codex or Claude Code backend inside the workspace
+4. Sends the workflow prompt to the selected agent
+5. Keeps the agent working on the issue until the work is done
 
-During app-server sessions, the selected tracker adapter may advertise provider-native tools. The
-Linear serves `linear_graphql`, GitHub Issues serves `github_api`, Jira Cloud serves
-`jira_rest`, Asana serves `asana_api`, and GitLab serves `gitlab_api`. Symphony executes those
-tools with configured host-side auth and removes declared tracker-token environment variables from
-the Codex child, so the agent does not need a second tracker login.
+During agent sessions, the selected tracker adapter may advertise provider-native tools. Linear
+serves `linear_graphql`, GitHub Issues and GitHub Projects serve `github_api`, Jira Cloud serves
+`jira_rest`, Asana serves `asana_api`, and GitLab serves `gitlab_api`. Every backend also receives
+provider-neutral tools to refresh the current issue, add a comment, and change its workflow state.
+Symphony executes those tools with host-side auth and removes declared tracker-token environment
+variables from the agent child, so the agent does not need a second tracker login.
 
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
 
-If Codex reports that operator input, approval, or MCP elicitation is required, Symphony keeps the
+If the agent reports that operator input or approval is required, Symphony keeps the
 issue claimed and exposes it as blocked in the runtime state, JSON API, and dashboard. Blocked
-entries are in memory only; restarting the orchestrator clears that blocked map, so any still-active
-tracker issue can become a dispatch candidate again after restart.
+runtime entries are in memory only. Adapters with a configured `blocked_state`, including GitHub
+Projects, also persist the block in the tracker; that non-active item remains paused across a
+restart until a human moves it back to an active queue state such as `Ready`.
 
 ## How to use it
 
@@ -65,7 +66,7 @@ mise exec -- elixir --version
 ## Run
 
 ```bash
-git clone https://github.com/openai/symphony
+git clone https://github.com/GHW-Consulting/symphony
 cd symphony/elixir
 mise trust
 mise install
@@ -78,7 +79,8 @@ mise exec -- ./bin/symphony ./WORKFLOW.md
 
 Symphony ships self-contained executables built with
 [Burrito](https://github.com/burrito-elixir/burrito). They embed Erlang/OTP, Elixir, and Symphony,
-but still expect `codex`, `git`, and the selected tracker credentials on the target machine.
+but still expect `git`, the selected agent executable (`codex` or `claude`), and the selected
+tracker credentials on the target machine.
 
 Supported release targets:
 
@@ -113,7 +115,7 @@ Optional flags:
 - `--port` also starts the Phoenix observability service (default: disabled)
 
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
-Codex session prompt.
+agent session prompt.
 
 Minimal example:
 
@@ -163,7 +165,8 @@ Notes:
 - Workflows that run package managers or other commands that resolve external hosts should set
   `networkAccess: true` in `codex.turn_sandbox_policy`; otherwise DNS/network access may be denied
   by the Codex turn sandbox.
-- `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
+- `agent.backend` selects `codex` or `claude`; it defaults to `codex` for existing workflows.
+- `agent.max_turns` caps how many back-to-back agent turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
@@ -199,6 +202,107 @@ codex:
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+
+### GitHub Project + Claude setup
+
+This profile uses the project Status field as the queue. No routing label is required: an issue in
+`Backlog` is ignored, and moving its project item to `Ready` makes it eligible on the next poll.
+
+1. In the GitHub Project, use a single-select field named `Status`. Create the options used by your
+   workflow, for example `Backlog`, `Ready`, `In Progress`, `Blocked`, `In Review`, `Done`, and
+   `Cancelled`.
+   Add repository issues to the project. Leave `tracker.required_labels` empty unless labels are an
+   intentional second routing constraint.
+2. Create a host-side GitHub credential. For an organization-owned project, the recommended
+   [fine-grained token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+   has access only to the target repository, organization `Projects: write`, and repository
+   `Issues: write`. The organization may need to approve the token. Export it without writing it
+   into `WORKFLOW.md`:
+
+   ```bash
+   export GITHUB_TOKEN=...
+   ```
+
+3. Install Claude Code on every machine that can run agents, log in there, and verify the session:
+
+   ```bash
+   claude auth status
+   ```
+
+4. Copy [`WORKFLOW.github-project-claude.example.md`](WORKFLOW.github-project-claude.example.md)
+   to the repository from which you will launch Symphony. Change `owner`, `owner_type`,
+   `project_number`, `repository`, `workspace.root`, and the clone command. The project number is
+   the number at the end of the GitHub Project URL.
+5. Keep `active_states` limited to states Symphony may start or continue. A typical queue uses
+   `Ready` and `In Progress`; `Backlog` must not be listed. Set `working_state` to `In Progress` so
+   Symphony claims the item before creating a workspace. Set `blocked_state` to the non-active,
+   non-terminal `Blocked` option. When an agent needs human intervention, Symphony moves the item
+   there before stopping; moving it back to `Ready` releases the claim and queues a retry.
+   `completion_state` is the review handoff state the agent may choose through
+   `tracker_update_state`.
+6. Choose the Claude permission policy. `default` is safer but an unattended run may block on a
+   permission request. `bypassPermissions` is suitable only for a trusted repository in an isolated
+   workspace or worker. Symphony always supplies and owns the required stream protocol flags, so
+   those flags must not be embedded in `claude.command`.
+7. Start Symphony with the configured workflow:
+
+   ```bash
+   cd elixir
+   mise exec -- mix setup
+   mise exec -- mix build
+   mise exec -- ./bin/symphony /absolute/path/to/WORKFLOW.md --port 4000
+   ```
+
+8. Open `http://127.0.0.1:4000`, then move one project item from `Backlog` to `Ready`. Symphony
+   confirms the project status, moves it to `In Progress`, creates its workspace, and starts Claude.
+   Moving another item to `Ready` is all that is required to queue it. If Symphony moves an item to
+   `Blocked`, resolve the recorded blocker and move it back to `Ready` to retry it.
+
+Workflow loading performs a live preflight: it resolves the project, repository, Status field,
+every configured status option, and project-item read access. GitHub has no mutation-free endpoint
+that proves project write authority for every supported token type, so the first confirmed claim is
+the write check; it still completes before workspace creation or agent startup. Reload failures keep
+the last known good snapshot, and sessions already running retain the tracker and backend snapshot
+with which they started.
+
+Claude receives tracker operations through a session-scoped MCP server bound to loopback. The
+Claude child gets only that short-lived MCP endpoint and bearer token; it does not receive
+`GITHUB_TOKEN`. The server accepts only tools advertised for the bound issue and shuts down with
+the agent session.
+
+To run Claude on SSH workers, add:
+
+```yaml
+worker:
+  ssh_hosts:
+    - agent@worker.example.com
+  max_concurrent_agents_per_host: 1
+```
+
+Each worker needs non-interactive SSH access, Bash, `curl`, Git, the configured Claude executable,
+a valid `claude auth status`, and permission to clone the target repository. SSH server policy must
+permit remote port forwarding. Symphony stages prompts and the generated MCP configuration in a
+private remote directory, opens an authenticated reverse tunnel to its local loopback MCP server,
+verifies it from the worker, and removes the staged files and tunnel when the session stops. GitHub
+credentials remain only on the orchestrator host.
+
+### GitHub Project adapter profile
+
+- Use `tracker.kind: github_project`; this is separate from `tracker.kind: github`, whose state is
+  the repository issue's open/closed state.
+- `tracker.provider.owner_type` is `organization` or `user` and selects the corresponding GitHub
+  Projects route. `repository` is the exact `owner/repo` whose issues may dispatch.
+- Project status, not labels or repository issue open/closed state, is authoritative. Matching is
+  case-insensitive, but the configured names must resolve unambiguously to options on the selected
+  single-select field.
+- Project-item IDs are Symphony's scheduled issue IDs. State changes are written to the project
+  item and immediately re-read; the agent is not started if the initial claim cannot be confirmed.
+- `working_state` must be active. `blocked_state` must be neither active nor terminal. An
+  input-required result moves the item to `blocked_state`; moving it to a different active state,
+  normally `Ready`, is the human-controlled retry signal.
+- `github_api` remains available for provider-native operations. The provider-neutral
+  `tracker_get_issue`, `tracker_add_comment`, and `tracker_update_state` tools should be preferred
+  for the current work item.
 
 ### Linear adapter profile
 
@@ -308,6 +412,15 @@ The observability UI now runs on a minimal Phoenix stack:
 
 ```bash
 make all
+```
+
+Run the opt-in Claude smoke test after authenticating the local CLI. It starts the real Claude
+backend, requires Claude to call the session-scoped `tracker_get_issue` MCP tool, and verifies the
+streamed result and session cleanup:
+
+```bash
+SYMPHONY_RUN_CLAUDE_LIVE_E2E=1 mise exec -- \
+  mix test test/symphony_elixir/claude_live_e2e_test.exs
 ```
 
 Run the real external end-to-end test only when you want Symphony to create disposable Linear

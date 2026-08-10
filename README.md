@@ -1,7 +1,8 @@
 # Symphony
 
 Symphony turns project work into isolated, autonomous implementation runs, allowing teams to manage
-work instead of supervising coding agents.
+work instead of supervising coding agents. This fork can schedule GitHub Project items by their
+project Status and run either Codex or Claude Code locally or on SSH workers.
 
 [![Symphony demo video preview](.github/media/symphony-demo-poster.jpg)](https://player.vimeo.com/video/1186371009?h=5626e4b899)
 

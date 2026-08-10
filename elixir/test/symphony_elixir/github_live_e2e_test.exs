@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.GitHub.LiveE2ETest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.AgentEvent
   alias SymphonyElixir.GitHub.Client, as: GitHubClient
 
   @moduletag :live_e2e
@@ -269,7 +270,7 @@ defmodule SymphonyElixir.GitHub.LiveE2ETest do
       when is_binary(workspace_path) ->
         runtime_info
 
-      {:codex_worker_update, ^issue_id, _message} ->
+      {:agent_worker_update, ^issue_id, %AgentEvent{}} ->
         receive_runtime_info!(issue_id)
     after
       5_000 ->
@@ -279,10 +280,14 @@ defmodule SymphonyElixir.GitHub.LiveE2ETest do
 
   defp completed_github_tool_calls(issue_id, calls \\ []) do
     receive do
-      {:codex_worker_update, ^issue_id, %{event: :tool_call_completed, payload: %{"params" => params}}} ->
+      {:agent_worker_update, ^issue_id,
+       %AgentEvent{
+         kind: :tool_call_completed,
+         payload: %{is_error: false, native: %{payload: %{"params" => params}}}
+       }} ->
         completed_github_tool_calls(issue_id, [params | calls])
 
-      {:codex_worker_update, ^issue_id, _message} ->
+      {:agent_worker_update, ^issue_id, %AgentEvent{}} ->
         completed_github_tool_calls(issue_id, calls)
     after
       0 ->

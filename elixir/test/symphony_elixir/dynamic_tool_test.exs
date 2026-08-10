@@ -53,7 +53,12 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     binding = BoundDynamicTool.bind()
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
-    assert BoundDynamicTool.bind().tool_specs == []
+
+    assert Enum.map(BoundDynamicTool.bind().tool_specs, & &1["name"]) == [
+             "tracker_get_issue",
+             "tracker_add_comment",
+             "tracker_update_state"
+           ]
 
     test_pid = self()
 

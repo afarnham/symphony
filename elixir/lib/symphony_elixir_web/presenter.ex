@@ -21,6 +21,7 @@ defmodule SymphonyElixirWeb.Presenter do
           running: Enum.map(snapshot.running, &running_entry_payload/1),
           retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
           blocked: Enum.map(Map.get(snapshot, :blocked, []), &blocked_entry_payload/1),
+          agent_totals: Map.get(snapshot, :agent_totals, snapshot.codex_totals),
           codex_totals: snapshot.codex_totals,
           rate_limits: snapshot.rate_limits
         }
@@ -80,6 +81,7 @@ defmodule SymphonyElixirWeb.Presenter do
       retry: retry && retry_issue_payload(retry),
       blocked: blocked && blocked_issue_payload(blocked),
       logs: %{
+        agent_session_logs: [],
         codex_session_logs: []
       },
       recent_events: recent_events_payload(running || blocked),
@@ -107,16 +109,20 @@ defmodule SymphonyElixirWeb.Presenter do
       state: entry.state,
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path),
+      backend: Map.get(entry, :backend),
       session_id: entry.session_id,
+      turn_id: Map.get(entry, :turn_id),
+      transport: transport_payload(entry),
       turn_count: Map.get(entry, :turn_count, 0),
-      last_event: entry.last_codex_event,
-      last_message: summarize_message(entry.last_codex_message),
+      last_event: Map.get(entry, :last_agent_event) || entry.last_codex_event,
+      last_message: summarize_message(Map.get(entry, :last_agent_message) || entry.last_codex_message),
       started_at: iso8601(entry.started_at),
-      last_event_at: iso8601(entry.last_codex_timestamp),
+      last_event_at: iso8601(Map.get(entry, :last_agent_timestamp) || entry.last_codex_timestamp),
       tokens: %{
-        input_tokens: entry.codex_input_tokens,
-        output_tokens: entry.codex_output_tokens,
-        total_tokens: entry.codex_total_tokens
+        input_tokens: Map.get(entry, :agent_input_tokens, entry.codex_input_tokens),
+        cached_input_tokens: Map.get(entry, :agent_cached_input_tokens, 0),
+        output_tokens: Map.get(entry, :agent_output_tokens, entry.codex_output_tokens),
+        total_tokens: Map.get(entry, :agent_total_tokens, entry.codex_total_tokens)
       }
     }
   end
@@ -129,6 +135,7 @@ defmodule SymphonyElixirWeb.Presenter do
       attempt: entry.attempt,
       due_at: due_at_iso8601(entry.due_in_ms),
       error: entry.error,
+      backend: Map.get(entry, :backend),
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path)
     }
@@ -143,11 +150,13 @@ defmodule SymphonyElixirWeb.Presenter do
       error: entry.error,
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path),
+      backend: Map.get(entry, :backend),
       session_id: entry.session_id,
+      transport: transport_payload(entry),
       blocked_at: iso8601(entry.blocked_at),
-      last_event: entry.last_codex_event,
-      last_message: summarize_message(entry.last_codex_message),
-      last_event_at: iso8601(entry.last_codex_timestamp)
+      last_event: Map.get(entry, :last_agent_event) || entry.last_codex_event,
+      last_message: summarize_message(Map.get(entry, :last_agent_message) || entry.last_codex_message),
+      last_event_at: iso8601(Map.get(entry, :last_agent_timestamp) || entry.last_codex_timestamp)
     }
   end
 
@@ -155,17 +164,21 @@ defmodule SymphonyElixirWeb.Presenter do
     %{
       worker_host: Map.get(running, :worker_host),
       workspace_path: Map.get(running, :workspace_path),
+      backend: Map.get(running, :backend),
       session_id: running.session_id,
+      turn_id: Map.get(running, :turn_id),
+      transport: transport_payload(running),
       turn_count: Map.get(running, :turn_count, 0),
       state: running.state,
       started_at: iso8601(running.started_at),
-      last_event: running.last_codex_event,
-      last_message: summarize_message(running.last_codex_message),
-      last_event_at: iso8601(running.last_codex_timestamp),
+      last_event: Map.get(running, :last_agent_event) || running.last_codex_event,
+      last_message: summarize_message(Map.get(running, :last_agent_message) || running.last_codex_message),
+      last_event_at: iso8601(Map.get(running, :last_agent_timestamp) || running.last_codex_timestamp),
       tokens: %{
-        input_tokens: running.codex_input_tokens,
-        output_tokens: running.codex_output_tokens,
-        total_tokens: running.codex_total_tokens
+        input_tokens: Map.get(running, :agent_input_tokens, running.codex_input_tokens),
+        cached_input_tokens: Map.get(running, :agent_cached_input_tokens, 0),
+        output_tokens: Map.get(running, :agent_output_tokens, running.codex_output_tokens),
+        total_tokens: Map.get(running, :agent_total_tokens, running.codex_total_tokens)
       }
     }
   end
@@ -175,6 +188,7 @@ defmodule SymphonyElixirWeb.Presenter do
       attempt: retry.attempt,
       due_at: due_at_iso8601(retry.due_in_ms),
       error: retry.error,
+      backend: Map.get(retry, :backend),
       worker_host: Map.get(retry, :worker_host),
       workspace_path: Map.get(retry, :workspace_path)
     }
@@ -184,13 +198,15 @@ defmodule SymphonyElixirWeb.Presenter do
     %{
       worker_host: Map.get(blocked, :worker_host),
       workspace_path: Map.get(blocked, :workspace_path),
+      backend: Map.get(blocked, :backend),
       session_id: blocked.session_id,
+      transport: transport_payload(blocked),
       state: blocked.state,
       error: blocked.error,
       blocked_at: iso8601(blocked.blocked_at),
-      last_event: blocked.last_codex_event,
-      last_message: summarize_message(blocked.last_codex_message),
-      last_event_at: iso8601(blocked.last_codex_timestamp)
+      last_event: Map.get(blocked, :last_agent_event) || blocked.last_codex_event,
+      last_message: summarize_message(Map.get(blocked, :last_agent_message) || blocked.last_codex_message),
+      last_event_at: iso8601(Map.get(blocked, :last_agent_timestamp) || blocked.last_codex_timestamp)
     }
   end
 
@@ -207,14 +223,21 @@ defmodule SymphonyElixirWeb.Presenter do
       (blocked && Map.get(blocked, :worker_host))
   end
 
+  defp transport_payload(entry) do
+    %{
+      mcp: Map.get(entry, :mcp),
+      ssh_tunnel: Map.get(entry, :ssh_tunnel)
+    }
+  end
+
   defp recent_events_payload(nil), do: []
 
   defp recent_events_payload(entry) do
     [
       %{
-        at: iso8601(entry.last_codex_timestamp),
-        event: entry.last_codex_event,
-        message: summarize_message(entry.last_codex_message)
+        at: iso8601(Map.get(entry, :last_agent_timestamp) || entry.last_codex_timestamp),
+        event: Map.get(entry, :last_agent_event) || entry.last_codex_event,
+        message: summarize_message(Map.get(entry, :last_agent_message) || entry.last_codex_message)
       }
     ]
     |> Enum.reject(&is_nil(&1.at))

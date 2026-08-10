@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.Jira.LiveE2ETest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.AgentEvent
   alias SymphonyElixir.Jira.Client, as: JiraClient
 
   @moduletag :live_e2e
@@ -406,7 +407,7 @@ defmodule SymphonyElixir.Jira.LiveE2ETest do
       when is_binary(workspace_path) ->
         runtime_info
 
-      {:codex_worker_update, ^issue_id, _message} ->
+      {:agent_worker_update, ^issue_id, %AgentEvent{}} ->
         receive_runtime_info!(issue_id)
     after
       5_000 ->
@@ -416,10 +417,14 @@ defmodule SymphonyElixir.Jira.LiveE2ETest do
 
   defp completed_jira_tool_calls(issue_id, calls \\ []) do
     receive do
-      {:codex_worker_update, ^issue_id, %{event: :tool_call_completed, payload: %{"params" => params}}} ->
+      {:agent_worker_update, ^issue_id,
+       %AgentEvent{
+         kind: :tool_call_completed,
+         payload: %{is_error: false, native: %{payload: %{"params" => params}}}
+       }} ->
         completed_jira_tool_calls(issue_id, [params | calls])
 
-      {:codex_worker_update, ^issue_id, _message} ->
+      {:agent_worker_update, ^issue_id, %AgentEvent{}} ->
         completed_jira_tool_calls(issue_id, calls)
     after
       0 ->

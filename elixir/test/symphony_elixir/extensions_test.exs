@@ -210,6 +210,9 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_ids(["issue-1"])
 
+    assert {:error, :state_transition_not_supported} =
+             SymphonyElixir.Tracker.update_issue_state(issue, "Done")
+
     binding = SymphonyElixir.Tracker.bind_agent_tools()
     assert binding.adapter == Memory
     assert binding.tool_specs == []
@@ -271,13 +274,24 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "state" => "In Progress",
                  "worker_host" => nil,
                  "workspace_path" => nil,
+                 "backend" => "codex",
                  "session_id" => "thread-http",
+                 "turn_id" => "turn-http",
+                 "transport" => %{
+                   "mcp" => %{"enabled" => true, "health" => "healthy", "transport" => "ssh_reverse_tunnel"},
+                   "ssh_tunnel" => %{"health" => "healthy", "remote_port" => 41_234}
+                 },
                  "turn_count" => 7,
                  "last_event" => "notification",
                  "last_message" => "rendered",
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
-                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+                 "tokens" => %{
+                   "input_tokens" => 4,
+                   "cached_input_tokens" => 0,
+                   "output_tokens" => 8,
+                   "total_tokens" => 12
+                 }
                }
              ],
              "retrying" => [
@@ -288,6 +302,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "attempt" => 2,
                  "due_at" => state_payload["retrying"] |> List.first() |> Map.fetch!("due_at"),
                  "error" => "boom",
+                 "backend" => "codex",
                  "worker_host" => nil,
                  "workspace_path" => nil
                }
@@ -301,7 +316,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "error" => "codex turn requires operator input",
                  "worker_host" => "dm-dev2",
                  "workspace_path" => "/workspaces/MT-BLOCKED",
+                 "backend" => "codex",
                  "session_id" => "thread-blocked",
+                 "transport" => %{
+                   "mcp" => %{"enabled" => true, "health" => "stopped", "transport" => "ssh_reverse_tunnel"},
+                   "ssh_tunnel" => %{"health" => "stopped", "remote_port" => 41_234}
+                 },
                  "blocked_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("blocked_at"),
                  "last_event" => "turn_input_required",
                  "last_message" => "turn blocked: waiting for user input",
@@ -309,6 +329,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                }
              ],
              "codex_totals" => %{
+               "input_tokens" => 4,
+               "output_tokens" => 8,
+               "total_tokens" => 12,
+               "seconds_running" => 42.5
+             },
+             "agent_totals" => %{
                "input_tokens" => 4,
                "output_tokens" => 8,
                "total_tokens" => 12,
@@ -332,18 +358,29 @@ defmodule SymphonyElixir.ExtensionsTest do
              "running" => %{
                "worker_host" => nil,
                "workspace_path" => nil,
+               "backend" => "codex",
                "session_id" => "thread-http",
+               "turn_id" => "turn-http",
+               "transport" => %{
+                 "mcp" => %{"enabled" => true, "health" => "healthy", "transport" => "ssh_reverse_tunnel"},
+                 "ssh_tunnel" => %{"health" => "healthy", "remote_port" => 41_234}
+               },
                "turn_count" => 7,
                "state" => "In Progress",
                "started_at" => issue_payload["running"]["started_at"],
                "last_event" => "notification",
                "last_message" => "rendered",
                "last_event_at" => nil,
-               "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+               "tokens" => %{
+                 "input_tokens" => 4,
+                 "cached_input_tokens" => 0,
+                 "output_tokens" => 8,
+                 "total_tokens" => 12
+               }
              },
              "retry" => nil,
              "blocked" => nil,
-             "logs" => %{"codex_session_logs" => []},
+             "logs" => %{"agent_session_logs" => [], "codex_session_logs" => []},
              "recent_events" => [],
              "last_error" => nil,
              "tracked" => %{}
@@ -513,7 +550,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Live"
     assert html =~ "Offline"
     assert html =~ "Copy ID"
-    assert html =~ "Codex update"
+    assert html =~ "Agent update"
+    assert html =~ "MCP healthy · tunnel healthy"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
@@ -528,7 +566,9 @@ defmodule SymphonyElixir.ExtensionsTest do
           identifier: "MT-HTTP",
           issue_url: "javascript:alert('nope')",
           state: "In Progress",
+          backend: :codex,
           session_id: "thread-http",
+          turn_id: "turn-http",
           turn_count: 8,
           last_codex_event: :notification,
           last_codex_message: %{
@@ -660,7 +700,11 @@ defmodule SymphonyElixir.ExtensionsTest do
           identifier: "MT-HTTP",
           issue_url: "https://example.org/issues/MT-HTTP",
           state: "In Progress",
+          backend: :codex,
           session_id: "thread-http",
+          turn_id: "turn-http",
+          mcp: %{enabled: true, health: :healthy, transport: :ssh_reverse_tunnel},
+          ssh_tunnel: %{health: :healthy, remote_port: 41_234},
           turn_count: 7,
           codex_app_server_pid: nil,
           last_codex_message: "rendered",
@@ -669,6 +713,10 @@ defmodule SymphonyElixir.ExtensionsTest do
           codex_input_tokens: 4,
           codex_output_tokens: 8,
           codex_total_tokens: 12,
+          agent_input_tokens: 4,
+          agent_cached_input_tokens: 0,
+          agent_output_tokens: 8,
+          agent_total_tokens: 12,
           started_at: DateTime.utc_now()
         }
       ],
@@ -679,6 +727,7 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_url: "https://example.org/issues/MT-RETRY",
           attempt: 2,
           due_in_ms: 2_000,
+          backend: :codex,
           error: "boom"
         }
       ],
@@ -691,7 +740,10 @@ defmodule SymphonyElixir.ExtensionsTest do
           error: "codex turn requires operator input",
           worker_host: "dm-dev2",
           workspace_path: "/workspaces/MT-BLOCKED",
+          backend: :codex,
           session_id: "thread-blocked",
+          mcp: %{enabled: true, health: :stopped, transport: :ssh_reverse_tunnel},
+          ssh_tunnel: %{health: :stopped, remote_port: 41_234},
           blocked_at: DateTime.utc_now(),
           last_codex_event: :turn_input_required,
           last_codex_message: %{
@@ -703,6 +755,7 @@ defmodule SymphonyElixir.ExtensionsTest do
         }
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
+      agent_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
       rate_limits: %{"primary" => %{"remaining" => 11}}
     }
   end

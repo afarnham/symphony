@@ -2,7 +2,7 @@ defmodule SymphonyElixir.LiveE2ETest do
   use SymphonyElixir.TestSupport
 
   require Logger
-  alias SymphonyElixir.SSH
+  alias SymphonyElixir.{AgentEvent, SSH}
 
   @moduletag :live_e2e
   @moduletag timeout: 300_000
@@ -401,7 +401,7 @@ defmodule SymphonyElixir.LiveE2ETest do
       when is_binary(workspace_path) ->
         runtime_info
 
-      {:codex_worker_update, ^issue_id, _message} ->
+      {:agent_worker_update, ^issue_id, %AgentEvent{}} ->
         receive_runtime_info!(issue_id)
     after
       5_000 ->

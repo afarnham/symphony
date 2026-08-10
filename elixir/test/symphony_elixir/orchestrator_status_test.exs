@@ -1,6 +1,32 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  defmodule BlockingTrackerAdapter do
+    @behaviour SymphonyElixir.Tracker
+
+    alias SymphonyElixir.Tracker.Issue
+
+    @impl true
+    def fetch_issues_by_states(_states), do: {:ok, []}
+
+    @impl true
+    def fetch_issues_by_ids(_ids), do: {:ok, []}
+
+    def fetch_issues_by_ids(_ids, _opts), do: {:ok, []}
+
+    @impl true
+    def update_issue_state(%Issue{} = issue, state, _opts) do
+      if test_pid = Application.get_env(:symphony_elixir, :blocked_state_test_pid) do
+        send(test_pid, {:blocked_state_transition, issue.id, state})
+      end
+
+      {:ok, %{issue | state: state}}
+    end
+
+    @impl true
+    def secret_environment_names(_tracker_settings), do: []
+  end
+
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
     parent = self()
@@ -100,6 +126,306 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              message: %{method: "some-event"},
              timestamp: now
            }
+  end
+
+  test "orchestrator records backend-neutral events and explicit turn completion" do
+    issue_id = "issue-agent-event"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-AGENT",
+      title: "Agent event test",
+      state: "In Progress"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :AgentEventOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:agent_worker_update, issue_id,
+       %SymphonyElixir.AgentEvent{
+         kind: :turn_started,
+         backend: :claude,
+         issue_id: issue_id,
+         session_id: "claude-session",
+         turn_id: "claude-turn",
+         timestamp: now,
+         payload: %{summary: "turn started"},
+         metadata: %{
+           os_pid: "4321",
+           mcp: %{enabled: true, health: :healthy, transport: :ssh_reverse_tunnel},
+           ssh_tunnel: %{health: :healthy, remote_port: 41_234}
+         }
+       }}
+    )
+
+    send(
+      pid,
+      {:agent_worker_update, issue_id,
+       %SymphonyElixir.AgentEvent{
+         kind: :usage_updated,
+         backend: :claude,
+         issue_id: issue_id,
+         session_id: "claude-session",
+         turn_id: "claude-turn",
+         timestamp: now,
+         payload: %{
+           usage: %{input_tokens: 5, cached_input_tokens: 2, output_tokens: 3},
+           accounting: :absolute
+         },
+         metadata: %{}
+       }}
+    )
+
+    completion = %SymphonyElixir.AgentTurnResult{
+      backend: :claude,
+      session_id: "claude-session",
+      turn_id: "claude-turn",
+      status: :blocked,
+      input_required: true
+    }
+
+    send(pid, {:agent_worker_completed, issue_id, completion})
+
+    state = :sys.get_state(pid)
+    entry = state.running[issue_id]
+    assert entry.backend == :claude
+    assert entry.session_id == "claude-session"
+    assert entry.last_agent_event == :usage_updated
+    assert entry.last_agent_timestamp == now
+    assert entry.agent_process_pid == "4321"
+    assert entry.mcp == %{enabled: true, health: :healthy, transport: :ssh_reverse_tunnel}
+    assert entry.ssh_tunnel == %{health: :healthy, remote_port: 41_234}
+    assert entry.agent_input_tokens == 5
+    assert entry.agent_cached_input_tokens == 2
+    assert entry.agent_output_tokens == 3
+    assert entry.agent_total_tokens == 10
+    assert entry.completion == completion
+    assert state.agent_totals.input_tokens == 5
+    assert state.agent_totals.cached_input_tokens == 2
+    assert state.agent_totals.output_tokens == 3
+    assert state.agent_totals.total_tokens == 10
+
+    [snapshot_entry] = Orchestrator.snapshot(orchestrator_name, 15_000).running
+    assert snapshot_entry.mcp == entry.mcp
+    assert snapshot_entry.ssh_tunnel == entry.ssh_tunnel
+  end
+
+  test "normalized Codex events own scheduler observability and derive deprecated read aliases" do
+    issue_id = "issue-normalized-codex"
+    orchestrator_name = Module.concat(__MODULE__, :NormalizedCodexOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    issue = %Issue{id: issue_id, identifier: "MT-CODEX", title: "Codex event", state: "In Progress"}
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+    rate_limits = %{"limit_id" => "codex", "primary" => %{"remaining" => 90}}
+
+    send(
+      pid,
+      {:agent_worker_update, issue_id,
+       %SymphonyElixir.AgentEvent{
+         kind: :turn_started,
+         backend: :codex,
+         issue_id: issue_id,
+         session_id: "thread-codex",
+         turn_id: "turn-codex",
+         timestamp: now,
+         payload: %{
+           native: %{
+             event: :session_started,
+             session_id: "thread-codex-turn-codex",
+             payload: %{method: "turn/started"}
+           }
+         },
+         metadata: %{os_pid: "6789"}
+       }}
+    )
+
+    send(
+      pid,
+      {:agent_worker_update, issue_id,
+       %SymphonyElixir.AgentEvent{
+         kind: :usage_updated,
+         backend: :codex,
+         issue_id: issue_id,
+         session_id: "thread-codex",
+         turn_id: "turn-codex",
+         timestamp: now,
+         payload: %{
+           usage: %{input_tokens: 12, cached_input_tokens: 2, output_tokens: 4},
+           accounting: :absolute,
+           rate_limits: rate_limits,
+           native: %{event: :notification, payload: %{method: "thread/tokenUsage/updated"}}
+         },
+         metadata: %{}
+       }}
+    )
+
+    completion = %SymphonyElixir.AgentTurnResult{
+      backend: :codex,
+      session_id: "thread-codex",
+      turn_id: "turn-codex",
+      status: :completed,
+      input_tokens: 12,
+      cached_input_tokens: 2,
+      output_tokens: 4
+    }
+
+    send(pid, {:agent_worker_completed, issue_id, completion})
+
+    state = :sys.get_state(pid)
+    entry = state.running[issue_id]
+    assert entry.backend == :codex
+    assert entry.session_id == "thread-codex"
+    assert entry.legacy_session_id == "thread-codex-turn-codex"
+    assert entry.turn_id == "turn-codex"
+    assert entry.turn_count == 1
+    assert entry.agent_process_pid == "6789"
+    assert entry.agent_input_tokens == 12
+    assert entry.agent_cached_input_tokens == 2
+    assert entry.agent_output_tokens == 4
+    assert entry.agent_total_tokens == 18
+    assert entry.codex_app_server_pid == "6789"
+    assert entry.codex_input_tokens == entry.agent_input_tokens
+    assert entry.codex_output_tokens == entry.agent_output_tokens
+    assert entry.codex_total_tokens == entry.agent_total_tokens
+    assert entry.last_agent_event == :usage_updated
+    assert entry.last_codex_event == :notification
+    assert entry.completion == completion
+    assert state.agent_totals == state.codex_totals
+    assert state.agent_totals.total_tokens == 18
+    assert state.agent_rate_limits == rate_limits
+    assert state.codex_rate_limits == rate_limits
+  end
+
+  test "terminal usage is authoritative and ignores late usage events for the completed turn" do
+    issue_id = "issue-authoritative-usage"
+    orchestrator_name = Module.concat(__MODULE__, :AuthoritativeUsageOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    issue = %Issue{id: issue_id, identifier: "MT-USAGE", title: "Usage", state: "In Progress"}
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      backend: :claude,
+      session_id: "claude-session",
+      turn_id: "turn-1",
+      turn_count: 1,
+      agent_input_tokens: 6,
+      agent_cached_input_tokens: 2,
+      agent_output_tokens: 4,
+      agent_total_tokens: 12,
+      agent_usage_turn_id: "turn-1",
+      agent_last_reported_input_tokens: 6,
+      agent_last_reported_cached_input_tokens: 2,
+      agent_last_reported_output_tokens: 4,
+      agent_last_reported_total_tokens: 12,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:agent_totals, %{
+        input_tokens: 6,
+        cached_input_tokens: 2,
+        output_tokens: 4,
+        total_tokens: 12,
+        seconds_running: 0
+      })
+    end)
+
+    completion = %SymphonyElixir.AgentTurnResult{
+      backend: :claude,
+      session_id: "claude-session",
+      turn_id: "turn-1",
+      status: :completed,
+      input_tokens: 5,
+      cached_input_tokens: 2,
+      output_tokens: 3
+    }
+
+    send(pid, {:agent_worker_completed, issue_id, completion})
+
+    send(
+      pid,
+      {:agent_worker_update, issue_id,
+       %SymphonyElixir.AgentEvent{
+         kind: :usage_updated,
+         backend: :claude,
+         issue_id: issue_id,
+         session_id: "claude-session",
+         turn_id: "turn-1",
+         timestamp: DateTime.utc_now(),
+         payload: %{usage: %{input_tokens: 9, cached_input_tokens: 2, output_tokens: 5}}
+       }}
+    )
+
+    state = :sys.get_state(pid)
+    entry = state.running[issue_id]
+    assert entry.agent_input_tokens == 5
+    assert entry.agent_cached_input_tokens == 2
+    assert entry.agent_output_tokens == 3
+    assert entry.agent_total_tokens == 10
+    assert state.agent_totals.input_tokens == 5
+    assert state.agent_totals.cached_input_tokens == 2
+    assert state.agent_totals.output_tokens == 3
+    assert state.agent_totals.total_tokens == 10
   end
 
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
@@ -730,7 +1056,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       due_at_ms: System.monotonic_time(:millisecond) + 5_000,
       identifier: "MT-500",
       issue_url: "https://example.org/issues/MT-500",
-      error: "agent exited: :boom"
+      error: "agent exited: :boom",
+      backend: :claude
     }
 
     initial_state = :sys.get_state(pid)
@@ -747,7 +1074,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
                due_in_ms: due_in_ms,
                identifier: "MT-500",
                issue_url: "https://example.org/issues/MT-500",
-               error: "agent exited: :boom"
+               error: "agent exited: :boom",
+               backend: :claude
              }
            ] = snapshot.retrying
 
@@ -1140,7 +1468,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         dispatchable: true
       },
       session_id: "thread-input-normal",
+      turn_id: "turn-input-normal",
+      backend: :claude,
       completion: %{outcome: :input_required},
+      last_agent_message: %{kind: :input_required},
+      last_agent_timestamp: DateTime.utc_now(),
+      last_agent_event: :input_required,
       last_codex_message: nil,
       last_codex_timestamp: nil,
       last_codex_event: nil,
@@ -1166,8 +1499,149 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert %{
              identifier: "MT-INPUT-NORMAL",
-             error: "codex turn requires operator input"
+             error: "codex turn requires operator input",
+             backend: :claude,
+             turn_id: "turn-input-normal",
+             last_agent_event: :input_required
            } = state.blocked[issue_id]
+  end
+
+  test "orchestrator moves an input-required issue to the configured blocked state" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    Process.sleep(50)
+
+    Application.put_env(:symphony_elixir, :blocked_state_test_pid, self())
+    on_exit(fn -> Application.delete_env(:symphony_elixir, :blocked_state_test_pid) end)
+
+    issue_id = "issue-project-blocked"
+    orchestrator_name = Module.concat(__MODULE__, :ProjectBlockedStateOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    Process.sleep(50)
+    initial_state = :sys.get_state(pid)
+    settings = Config.settings!()
+
+    tracker_settings = %{
+      settings.tracker
+      | active_states: ["Ready", "In Progress"],
+        terminal_states: ["Done"],
+        working_state: "In Progress",
+        blocked_state: "Blocked"
+    }
+
+    settings = %{settings | tracker: tracker_settings}
+    issue = %Issue{id: issue_id, identifier: "GH-42", state: "In Progress", dispatchable: true}
+    ref = make_ref()
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: issue.identifier,
+      issue: issue,
+      settings_snapshot: settings,
+      tracker_binding: %{adapter: BlockingTrackerAdapter, tracker_settings: tracker_settings},
+      completion: %SymphonyElixir.AgentTurnResult{
+        backend: :claude,
+        status: :blocked,
+        input_required: true
+      },
+      last_agent_event: :input_required,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :normal})
+
+    assert_receive {:blocked_state_transition, ^issue_id, "Blocked"}, 1_000
+    state = :sys.get_state(pid)
+
+    assert state.blocked[issue_id].issue.state == "Blocked"
+    assert MapSet.member?(state.claimed, issue_id)
+  end
+
+  test "moving a blocked issue back to Ready releases it for retry" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_active_states: ["Ready", "In Progress"],
+      tracker_terminal_states: ["Done"],
+      tracker_working_state: "In Progress",
+      tracker_blocked_state: "Blocked"
+    )
+
+    issue_id = "issue-human-retry"
+
+    blocked_issue = %Issue{
+      id: issue_id,
+      identifier: "GH-43",
+      title: "Retry after human intervention",
+      state: "Blocked",
+      dispatchable: true
+    }
+
+    blocked_entry = %{
+      issue_id: issue_id,
+      identifier: blocked_issue.identifier,
+      issue: blocked_issue,
+      error: "agent requires operator input"
+    }
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 1,
+      claimed: MapSet.new([issue_id]),
+      blocked: %{issue_id => blocked_entry},
+      retry_attempts: %{}
+    }
+
+    retained = Orchestrator.reconcile_blocked_issue_states_for_test([blocked_issue], state)
+    assert Map.has_key?(retained.blocked, issue_id)
+    assert MapSet.member?(retained.claimed, issue_id)
+
+    ready_issue = %{blocked_issue | state: "Ready"}
+    released = Orchestrator.reconcile_blocked_issue_states_for_test([ready_issue], retained)
+
+    refute Map.has_key?(released.blocked, issue_id)
+    refute MapSet.member?(released.claimed, issue_id)
+    assert Orchestrator.should_dispatch_issue_for_test(ready_issue, released)
+  end
+
+  test "claim failures enter retry backoff and are excluded from normal dispatch" do
+    issue = %Issue{
+      id: "issue-claim-failure",
+      identifier: "MT-CLAIM",
+      title: "Claim failure",
+      state: "In Progress",
+      dispatchable: true
+    }
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 1,
+      running: %{},
+      claimed: MapSet.new(),
+      blocked: %{},
+      retry_attempts: %{}
+    }
+
+    updated_state =
+      Orchestrator.schedule_claim_failure_for_test(state, issue, :forbidden)
+
+    assert %{
+             attempt: 1,
+             backend: "codex",
+             error: "claim failed: :forbidden",
+             timer_ref: timer_ref
+           } = updated_state.retry_attempts[issue.id]
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, updated_state)
+    Process.cancel_timer(timer_ref)
   end
 
   test "status dashboard renders offline marker to terminal" do
