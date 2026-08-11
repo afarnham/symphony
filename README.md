@@ -37,8 +37,10 @@ help with the setup:
 
 ### Option 3. Deploy the container stack to a Linux VM
 
-This fork includes separate orchestrator and SSH worker containers, file-backed runtime secrets,
-and a systemd-managed Docker Compose deployment. See the
+This fork includes a separate orchestrator plus credential-isolated SSH worker profiles,
+file-backed runtime secrets, and a systemd-managed Docker Compose deployment. GitHub Project
+assignees can select Claude or Codex without sharing model credentials; see the
+[assignee-routing contract](docs/assignee-executor-routing.md) and the
 [Linux container deployment runbook](docs/linux-container-deployment.md).
 
 ---

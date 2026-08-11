@@ -16,6 +16,8 @@ defmodule SymphonyElixir.GitHubProject.Normalizer do
           required(:option_names) => %{String.t() => String.t()}
         }
 
+  @type executor_snapshot :: status_snapshot()
+
   @spec resolve_status_field([map()], String.t(), [String.t()]) ::
           {:ok, status_snapshot()} | {:error, term()}
   def resolve_status_field(fields, configured_name, required_states)
@@ -44,16 +46,47 @@ defmodule SymphonyElixir.GitHubProject.Normalizer do
     {:error, {:github_project_status_field_not_found, display_name(configured_name)}}
   end
 
+  @spec resolve_executor_field([map()], String.t()) ::
+          {:ok, executor_snapshot()} | {:error, term()}
+  def resolve_executor_field(fields, configured_name)
+      when is_list(fields) and is_binary(configured_name) do
+    requested_name = String.trim(configured_name)
+    normalized_name = normalize_name(requested_name)
+
+    matches =
+      Enum.filter(fields, fn field ->
+        normalize_name(display_name(field["name"])) == normalized_name
+      end)
+
+    case matches do
+      [] ->
+        {:error, {:github_project_executor_field_not_found, requested_name}}
+
+      [_first, _second | _rest] ->
+        {:error, {:github_project_executor_field_ambiguous, requested_name}}
+
+      [field] ->
+        resolve_single_executor_field(field)
+    end
+  end
+
+  def resolve_executor_field(_fields, configured_name) do
+    {:error, {:github_project_executor_field_not_found, display_name(configured_name)}}
+  end
+
   @spec normalize_item(map(), map()) ::
           {:ok, Issue.t()} | {:skip, term()} | {:error, term()}
   def normalize_item(%{"content_type" => "Issue"} = item, context) when is_map(context) do
     with {:ok, item_id} <- positive_integer(item["id"]),
          {:ok, status_option_id, state} <- item_status(item, context),
+         {:ok, requested_backend} <- item_executor(item, context),
          %{} = content <- item["content"],
          :ok <- validate_repository(content, item, context.repository),
          {:ok, issue_number} <- positive_integer(content["number"]),
          true <- present_string?(content["title"]) or {:error, :github_project_item_malformed},
          true <- present_string?(content["state"]) or {:error, :github_project_item_malformed} do
+      assignee_ids = extract_assignees(content)
+
       issue = %Issue{
         id: Integer.to_string(item_id),
         native_ref: native_ref(item_id, issue_number, status_option_id, content, context),
@@ -64,7 +97,9 @@ defmodule SymphonyElixir.GitHubProject.Normalizer do
         state: state,
         branch_name: nil,
         url: content["html_url"],
-        assignee_id: get_in(content, ["assignee", "login"]),
+        assignee_id: List.first(assignee_ids),
+        assignee_ids: assignee_ids,
+        requested_backend: requested_backend,
         labels: extract_labels(content["labels"]),
         blocked_by: [],
         dispatchable: dispatchable?(item, content, state),
@@ -111,6 +146,52 @@ defmodule SymphonyElixir.GitHubProject.Normalizer do
              option_names: options.option_names
            }}
         end
+    end
+  end
+
+  defp resolve_single_executor_field(field) do
+    field_name = display_name(field["name"])
+
+    cond do
+      normalize_name(field["data_type"]) != "single_select" ->
+        {:error, {:github_project_executor_field_not_single_select, field_name}}
+
+      not is_integer(field["id"]) or field["id"] <= 0 ->
+        {:error, :github_project_executor_field_malformed}
+
+      not is_list(field["options"]) ->
+        {:error, :github_project_executor_field_malformed}
+
+      true ->
+        with {:ok, options} <- normalize_options(field["options"]),
+             :ok <- validate_executor_options(options.option_ids) do
+          {:ok,
+           %{
+             field_id: field["id"],
+             field_name: field_name,
+             option_ids: options.option_ids,
+             option_names: options.option_names
+           }}
+        else
+          {:error, {:github_project_state_ambiguous, name}} ->
+            {:error, {:github_project_executor_option_ambiguous, name}}
+
+          {:error, :github_project_status_option_malformed} ->
+            {:error, :github_project_executor_option_malformed}
+
+          {:error, _reason} = error ->
+            error
+        end
+    end
+  end
+
+  defp validate_executor_options(option_ids) do
+    option_names = Map.keys(option_ids) |> Enum.sort()
+
+    if option_names == ["claude", "codex"] do
+      :ok
+    else
+      {:error, {:github_project_executor_options_invalid, option_names}}
     end
   end
 
@@ -180,6 +261,38 @@ defmodule SymphonyElixir.GitHubProject.Normalizer do
         {:error, :github_project_item_malformed_status}
     end
   end
+
+  defp item_executor(_item, %{executor: nil}), do: {:ok, nil}
+
+  defp item_executor(item, %{executor: executor}) do
+    executor_fields =
+      item
+      |> Map.get("fields", [])
+      |> List.wrap()
+      |> Enum.filter(&(&1["id"] == executor.field_id))
+
+    case executor_fields do
+      [] ->
+        {:ok, nil}
+
+      [_first, _second | _rest] ->
+        {:error, :github_project_item_ambiguous_executor_field}
+
+      [%{"value" => nil}] ->
+        {:ok, nil}
+
+      [%{"value" => %{"id" => option_id}}] when is_binary(option_id) ->
+        case Map.fetch(executor.option_names, option_id) do
+          {:ok, backend} -> {:ok, normalize_name(backend)}
+          :error -> {:error, {:github_project_unknown_executor_option, option_id}}
+        end
+
+      [_field] ->
+        {:error, :github_project_item_malformed_executor}
+    end
+  end
+
+  defp item_executor(_item, _context), do: {:ok, nil}
 
   defp validate_repository(content, item, configured_repository) do
     case repository_name(content, item) do
@@ -255,6 +368,22 @@ defmodule SymphonyElixir.GitHubProject.Normalizer do
   end
 
   defp extract_labels(_labels), do: []
+
+  defp extract_assignees(content) when is_map(content) do
+    assignees =
+      case content["assignees"] do
+        values when is_list(values) -> values
+        _values -> List.wrap(content["assignee"])
+      end
+
+    assignees
+    |> Enum.flat_map(fn
+      %{"login" => login} when is_binary(login) -> [String.trim(login)]
+      _assignee -> []
+    end)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq_by(&String.downcase/1)
+  end
 
   defp dispatchable?(item, content, state) do
     is_nil(item["archived_at"]) and not is_nil(state) and normalize_name(content["state"]) == "open"

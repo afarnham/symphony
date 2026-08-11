@@ -125,7 +125,10 @@ defmodule SymphonyElixir.Config do
     if is_nil(settings.tracker.kind) do
       {:error, :missing_tracker_kind}
     else
-      with :ok <- Tracker.validate_config(settings.tracker) do
+      tracker_settings = tracker_settings_with_routing(settings)
+
+      with :ok <- validate_routing_settings(settings),
+           :ok <- Tracker.validate_config(tracker_settings) do
         AgentBackend.validate_config(settings)
       end
     end
@@ -135,9 +138,48 @@ defmodule SymphonyElixir.Config do
   @spec prepare_settings(Schema.t()) :: {:ok, Schema.t()} | {:error, term()}
   def prepare_settings(settings) do
     with :ok <- validate_settings(settings),
-         {:ok, tracker_settings} <- Tracker.prepare_config(settings.tracker) do
+         {:ok, tracker_settings} <-
+           settings
+           |> tracker_settings_with_routing()
+           |> Tracker.prepare_config() do
       {:ok, %{settings | tracker: tracker_settings}}
     end
+  end
+
+  defp validate_routing_settings(%{agent: %{routing: nil}}), do: :ok
+
+  defp validate_routing_settings(%{
+         tracker: tracker,
+         agent: %{routing: routing}
+       }) do
+    active_states = Map.get(tracker, :active_states) || []
+    normalized_ready = Schema.normalize_issue_state(routing.ready_state)
+    normalized_working = Schema.normalize_issue_state(tracker.working_state || "")
+
+    cond do
+      tracker.kind != "github_project" ->
+        {:error, :agent_routing_requires_github_project}
+
+      not Enum.any?(active_states, &(Schema.normalize_issue_state(&1) == normalized_ready)) ->
+        {:error, :agent_routing_ready_state_not_active}
+
+      normalized_ready == normalized_working ->
+        {:error, :agent_routing_ready_state_is_working_state}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp tracker_settings_with_routing(%{tracker: tracker, agent: %{routing: nil}}), do: tracker
+
+  defp tracker_settings_with_routing(%{tracker: tracker, agent: %{routing: routing}}) do
+    provider =
+      tracker.provider
+      |> Map.put("executor_field", routing.executor_field)
+      |> Map.put("routing_ready_state", routing.ready_state)
+
+    %{tracker | provider: provider}
   end
 
   defp format_config_error(reason) do

@@ -1,5 +1,43 @@
 name: symphony
 
+x-agent-worker: &agent-worker
+  image: ${SYMPHONY_WORKER_IMAGE:-ghcr.io/ghw-consulting/symphony-agent-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+  pull_policy: missing
+  restart: unless-stopped
+  depends_on:
+    volume-init:
+      condition: service_completed_successfully
+  read_only: true
+  environment:
+    GH_CONFIG_DIR: /tmp/symphony-gh
+    HOME: /home/worker
+    NPM_CONFIG_CACHE: /home/worker/.cache/npm
+    PNPM_HOME: /home/worker/.local/share/pnpm
+    XDG_CACHE_HOME: /home/worker/.cache
+    XDG_DATA_HOME: /home/worker/.local/share
+  pids_limit: ${SYMPHONY_WORKER_PIDS_LIMIT:-512}
+  mem_limit: ${SYMPHONY_WORKER_MEM_LIMIT:-8g}
+  cpus: ${SYMPHONY_WORKER_CPUS:-4.0}
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=${SYMPHONY_WORKER_TMPFS_SIZE:-1g},mode=1777
+  networks:
+    - symphony-private
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/symphony-worker-healthcheck"]
+    interval: 10s
+    timeout: 5s
+    retries: 6
+    start_period: 10s
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: local
+    options:
+      max-size: ${SYMPHONY_LOG_MAX_SIZE:-10m}
+      max-file: "${SYMPHONY_LOG_MAX_FILES:-5}"
+
 services:
   volume-init:
     image: ${SYMPHONY_IMAGE:-ghcr.io/ghw-consulting/symphony@sha256:0000000000000000000000000000000000000000000000000000000000000000}
@@ -14,11 +52,16 @@ services:
     mem_limit: 64m
     cpus: 0.25
     volumes:
-      - symphony-workspaces:/volumes/workspaces
-      - symphony-claude-auth:/volumes/claude-auth
-      - symphony-codex-auth:/volumes/codex-auth
-      - symphony-worker-cache:/volumes/worker-cache
-      - symphony-worker-local:/volumes/worker-local
+      - symphony-afarnham-workspaces:/volumes/afarnham/workspaces
+      - symphony-afarnham-claude-auth:/volumes/afarnham/claude-auth
+      - symphony-afarnham-codex-auth:/volumes/afarnham/codex-auth
+      - symphony-afarnham-worker-cache:/volumes/afarnham/worker-cache
+      - symphony-afarnham-worker-local:/volumes/afarnham/worker-local
+      - symphony-karbas-workspaces:/volumes/karbas/workspaces
+      - symphony-karbas-claude-auth:/volumes/karbas/claude-auth
+      - symphony-karbas-codex-auth:/volumes/karbas/codex-auth
+      - symphony-karbas-worker-cache:/volumes/karbas/worker-cache
+      - symphony-karbas-worker-local:/volumes/karbas/worker-local
       - symphony-logs:/volumes/logs
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=1m,mode=1777
@@ -34,55 +77,39 @@ services:
         max-size: ${SYMPHONY_LOG_MAX_SIZE:-10m}
         max-file: "${SYMPHONY_LOG_MAX_FILES:-5}"
 
-  agent-worker:
-    image: ${SYMPHONY_WORKER_IMAGE:-ghcr.io/ghw-consulting/symphony-agent-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000}
-    pull_policy: missing
-    restart: unless-stopped
-    depends_on:
-      volume-init:
-        condition: service_completed_successfully
-    read_only: true
-    environment:
-      GH_CONFIG_DIR: /tmp/symphony-gh
-      HOME: /home/worker
-      NPM_CONFIG_CACHE: /home/worker/.cache/npm
-      PNPM_HOME: /home/worker/.local/share/pnpm
-      XDG_CACHE_HOME: /home/worker/.cache
-      XDG_DATA_HOME: /home/worker/.local/share
-    pids_limit: ${SYMPHONY_WORKER_PIDS_LIMIT:-512}
-    mem_limit: ${SYMPHONY_WORKER_MEM_LIMIT:-8g}
-    cpus: ${SYMPHONY_WORKER_CPUS:-4.0}
+  agent-worker-afarnham:
+    <<: *agent-worker
     volumes:
-      - symphony-workspaces:/workspaces
-      - symphony-claude-auth:/home/worker/.claude
-      - symphony-codex-auth:/home/worker/.codex
-      - symphony-worker-cache:/home/worker/.cache
-      - symphony-worker-local:/home/worker/.local
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=${SYMPHONY_WORKER_TMPFS_SIZE:-1g},mode=1777
+      - symphony-afarnham-workspaces:/workspaces
+      - symphony-afarnham-claude-auth:/home/worker/.claude
+      - symphony-afarnham-codex-auth:/home/worker/.codex
+      - symphony-afarnham-worker-cache:/home/worker/.cache
+      - symphony-afarnham-worker-local:/home/worker/.local
     secrets:
       - github_worker_token
       - worker_ssh_authorized_key
       - worker_ssh_host_private_key
-      - claude_oauth_token
-      - openai_api_key
-    networks:
-      - symphony-private
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/symphony-worker-healthcheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 10s
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    logging:
-      driver: local
-      options:
-        max-size: ${SYMPHONY_LOG_MAX_SIZE:-10m}
-        max-file: "${SYMPHONY_LOG_MAX_FILES:-5}"
+      - source: afarnham_claude_oauth_token
+        target: claude_oauth_token
+      - source: afarnham_openai_api_key
+        target: openai_api_key
+
+  agent-worker-karbas:
+    <<: *agent-worker
+    volumes:
+      - symphony-karbas-workspaces:/workspaces
+      - symphony-karbas-claude-auth:/home/worker/.claude
+      - symphony-karbas-codex-auth:/home/worker/.codex
+      - symphony-karbas-worker-cache:/home/worker/.cache
+      - symphony-karbas-worker-local:/home/worker/.local
+    secrets:
+      - github_worker_token
+      - worker_ssh_authorized_key
+      - worker_ssh_host_private_key
+      - source: karbas_claude_oauth_token
+        target: claude_oauth_token
+      - source: karbas_openai_api_key
+        target: openai_api_key
 
   symphony:
     image: ${SYMPHONY_IMAGE:-ghcr.io/ghw-consulting/symphony@sha256:0000000000000000000000000000000000000000000000000000000000000000}
@@ -92,13 +119,16 @@ services:
     depends_on:
       volume-init:
         condition: service_completed_successfully
-      agent-worker:
+      agent-worker-afarnham:
+        condition: service_healthy
+      agent-worker-karbas:
         condition: service_healthy
     environment:
       HOME: /home/symphony
       SYMPHONY_LOGS_ROOT: /var/log/symphony
       SYMPHONY_PORT: "4000"
       SYMPHONY_SSH_CONFIG: /tmp/symphony-ssh/config
+      SYMPHONY_SSH_HOSTS: agent-worker-afarnham agent-worker-karbas
       SYMPHONY_WORKFLOW_PATH: /etc/symphony/WORKFLOW.md
     pids_limit: ${SYMPHONY_PIDS_LIMIT:-256}
     mem_limit: ${SYMPHONY_MEM_LIMIT:-2g}
@@ -141,11 +171,16 @@ networks:
     internal: false
 
 volumes:
-  symphony-workspaces:
-  symphony-claude-auth:
-  symphony-codex-auth:
-  symphony-worker-cache:
-  symphony-worker-local:
+  symphony-afarnham-workspaces:
+  symphony-afarnham-claude-auth:
+  symphony-afarnham-codex-auth:
+  symphony-afarnham-worker-cache:
+  symphony-afarnham-worker-local:
+  symphony-karbas-workspaces:
+  symphony-karbas-claude-auth:
+  symphony-karbas-codex-auth:
+  symphony-karbas-worker-cache:
+  symphony-karbas-worker-local:
   symphony-logs:
 
 secrets:
@@ -161,7 +196,11 @@ secrets:
     file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/worker_ssh_host_private_key
   worker_ssh_host_public_key:
     file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/worker_ssh_host_public_key
-  claude_oauth_token:
-    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/claude_oauth_token
-  openai_api_key:
-    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/openai_api_key
+  afarnham_claude_oauth_token:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/afarnham_claude_oauth_token
+  afarnham_openai_api_key:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/afarnham_openai_api_key
+  karbas_claude_oauth_token:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/karbas_claude_oauth_token
+  karbas_openai_api_key:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/karbas_openai_api_key

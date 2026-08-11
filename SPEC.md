@@ -475,6 +475,23 @@ Fields:
   - Default: empty map.
   - State keys are normalized (`trim + lowercase`) for lookup.
   - Invalid entries (non-positive or non-numeric) are ignored.
+- `backend` (`codex` or `claude`)
+  - Default: `codex`.
+  - Selects the backend when `routing` is absent.
+- `routing` (object, OPTIONAL)
+  - Supported by the GitHub Project adapter.
+  - `ready_state` names the active, non-working Project status whose human transition authorizes a
+    new route.
+  - `executor_field` names a Project single-select field with exactly `Claude` and `Codex` options.
+  - `profiles` maps normalized GitHub logins to `default_backend` and an exclusive, non-empty
+    `worker_hosts` list.
+  - The Ready-transition actor MUST be a current issue assignee, MUST name a configured profile,
+    and MUST not be an automated transition. Routing fails closed when the actor or history cannot
+    be established.
+  - A blank Executor value uses the actor profile's default. An explicit value overrides the
+    backend but never the credential profile.
+  - The resolved profile, backend, eligible hosts, and selected host MUST remain immutable across
+    retries, continuations, blocked reconciliation, and configuration reloads.
 
 #### 5.3.6 `codex` (object)
 
@@ -641,6 +658,8 @@ not require recognizing or validating extension fields unless that extension is 
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
+- `agent.backend`: `codex` or `claude`, default `codex`
+- `agent.routing`: optional assignee-aware GitHub Project execution profiles
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
@@ -762,8 +781,11 @@ Tick sequence:
 2. Run dispatch preflight validation.
 3. Fetch candidate issues from tracker using active states.
 4. Sort issues by dispatch priority.
-5. Dispatch eligible issues while slots remain.
-6. Notify observability/status consumers of state changes.
+5. For assignee-routed candidates, re-fetch the configured Ready transition and resolve one
+   immutable execution route before changing tracker state.
+6. Claim the issue in the configured working state.
+7. Dispatch eligible issues only to hosts in the resolved profile while slots remain.
+8. Notify observability/status consumers of state changes.
 
 If per-tick validation fails, dispatch is skipped for that tick, but reconciliation still happens
 first.

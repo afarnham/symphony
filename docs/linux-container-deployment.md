@@ -1,17 +1,18 @@
 # Deploy Symphony to a Linux VM
 
-This runbook deploys Symphony as two long-running containers on a single, trusted Linux VM:
+This runbook deploys Symphony as three long-running containers on a single, trusted Linux VM:
 
 - `symphony` polls the tracker, owns scheduling, and serves the host-loopback dashboard.
-- `agent-worker` accepts SSH sessions from Symphony and runs Git, Claude Code, or Codex in
-  isolated workspaces.
+- `agent-worker-afarnham` and `agent-worker-karbas` accept SSH sessions from Symphony. Each has
+  isolated Claude, Codex, workspace, cache, and local-state volumes.
 
 A third `volume-init` service runs once with only the `CHOWN` capability, no network, and no
 secrets; it prepares the named volumes for the unprivileged services and exits.
 
 The separation is a security boundary. The orchestrator receives the GitHub Project tracker
-credential. The worker receives a different, repository-scoped GitHub credential and the coding
-agent credentials. Do not collapse the services or share their secrets.
+credential. Both workers receive the same repository-scoped GitHub credential, but each worker has
+its own coding-agent credentials. Do not collapse the model-authentication volumes or mount one
+profile's volumes into the other profile.
 
 The checked-in operator interface is:
 
@@ -38,7 +39,7 @@ dedicated credentials for each trust domain.
 
 The stack enforces these boundaries:
 
-| Asset | Mounted into `symphony` | Mounted into `agent-worker` |
+| Asset | Mounted into `symphony` | Mounted into each worker |
 |---|---:|---:|
 | GitHub Project tracker token | Yes | No |
 | Worker repository token | No | Yes |
@@ -46,12 +47,13 @@ The stack enforces these boundaries:
 | Worker SSH authorized key | No | Yes |
 | Worker SSH host public key | Yes | No |
 | Worker SSH host private key | No | Yes |
-| Claude/Codex authentication | No | Yes |
-| Workspace volume | No | Yes |
+| Claude/Codex authentication | No | Yes, profile-specific |
+| Workspace volume | No | Yes, profile-specific |
 | Docker socket | No | No |
 
 Symphony exposes only a session-scoped tracker MCP token to a running agent. The long-lived Project
-token remains in the orchestrator. The generated SSH host public key pins `agent-worker`; Symphony
+token remains in the orchestrator. The generated SSH host public key pins both worker endpoints;
+Symphony
 does not trust a fresh network keyscan at each restart. Compose publishes the dashboard to host
 `127.0.0.1` by default; do not publish it to a public interface without an authenticated TLS reverse
 proxy or a private overlay network.
@@ -109,7 +111,7 @@ The tracker credential is used only by `symphony` and should be limited to:
 - The target organization and Project, with Projects read/write access.
 - The target repository, with Issues read/write and Metadata read access.
 
-The worker credential is used only by `agent-worker` for HTTPS Git and pull-request operations. It
+The worker credential is used only by the two worker services for HTTPS Git and pull-request operations. It
 should be a fine-grained token limited to the target repository, with Contents read/write, Pull
 requests read/write, and Metadata read access. Add other repository permissions only when a real
 workflow requires them. The worker does not need organization Projects permission; tracker comments
@@ -274,9 +276,10 @@ Compose mounts these sources selectively:
 
 - `github_project_token` and `worker_ssh_private_key` into `symphony`.
 - `worker_ssh_host_public_key` into `symphony` for strict host verification.
-- `github_worker_token`, `worker_ssh_authorized_key`, and `worker_ssh_host_private_key` into
-  `agent-worker`.
-- Optional model-provider secrets into `agent-worker` only.
+- `github_worker_token`, `worker_ssh_authorized_key`, and `worker_ssh_host_private_key` into both
+  workers.
+- `afarnham_*` model-provider secrets only into `agent-worker-afarnham`, and `karbas_*` secrets
+  only into `agent-worker-karbas`.
 
 The workflow refers to the tracker credential by file URI:
 
@@ -299,8 +302,8 @@ sudo install -o root -g root -m 0644 \
 sudoedit /etc/symphony/WORKFLOW.md
 ```
 
-The example uses GitHub Project 2 and repository `GHW-Consulting/app-tastemap`. Its Project Status
-flow is:
+The example uses GitHub Project 2 and repository `GHW-Consulting/app-tastemap`. Add a Project
+single-select field named `Executor` with exactly `Claude` and `Codex` options. Its Status flow is:
 
 | Status | Meaning |
 |---|---|
@@ -311,10 +314,11 @@ flow is:
 | `In Review` | Implementation complete and handed to a human. |
 | `Done` / `Cancelled` | Terminal. |
 
-The example selects Claude. To use Codex instead, set `agent.backend: codex` and configure the
-Codex block according to [the Elixir implementation guide](../elixir/README.md). Do not put GitHub
-credentials in the clone URL. The worker entrypoint supplies the repository credential to Git's
-credential helper.
+The example maps `afarnham` to a Codex-default worker and `karbas` to a Claude-default worker. The
+person moving an item to `Ready` must also be an issue assignee. Leaving Executor blank uses that
+person's default; setting it overrides the backend without changing whose credentials run the
+ticket. Do not put GitHub credentials in the clone URL. The worker entrypoint supplies the shared
+repository credential to Git's credential helper.
 
 The example sets Claude's `permission_mode` to `bypassPermissions` for unattended work. That is an
 explicit trust decision: the agent can run commands and change files without an interactive
@@ -322,9 +326,8 @@ approval prompt. Use it only with the dedicated worker, a trusted repository, an
 scoped worker credential. A more restrictive mode may pause unattended work for approval.
 
 The workflow is mounted read-only into the orchestrator. The workspace root `/workspaces` is on the
-worker volume because the workflow config is interpreted on the selected SSH host. The configured
-SSH destination is the Compose-network address `worker@agent-worker` and is not exposed on a host
-port.
+selected profile's worker volume. The configured SSH destinations are
+`worker@agent-worker-afarnham` and `worker@agent-worker-karbas`; neither is exposed on a host port.
 
 The example's `server.host: 0.0.0.0` is required inside a container: a server bound to container
 loopback cannot receive Docker's published-port traffic. Exposure is still restricted on the VM by
@@ -358,7 +361,8 @@ The command prints a long-lived subscription OAuth token but does not save it. O
 using hidden terminal input:
 
 ```bash
-sudo symphony-admin secrets set claude_oauth_token
+sudo symphony-admin secrets set afarnham_claude_oauth_token
+sudo symphony-admin secrets set karbas_claude_oauth_token
 ```
 
 Compose mounts the file only into the worker. The Claude launcher reads it and exports
@@ -368,29 +372,29 @@ it like a password and revoke it when the VM is retired or compromised.
 
 ### Persistent interactive login
 
-If `claude_oauth_token` is unset (its initialized file is empty), authenticate a disposable worker
-container:
+If a profile's Claude token is unset, authenticate that profile's disposable worker container:
 
 ```bash
-sudo symphony-admin auth claude
+sudo symphony-admin workers auth afarnham claude
+sudo symphony-admin workers auth karbas claude
 ```
 
 Open the displayed URL on your normal computer and paste the returned code into the SSH terminal
-when prompted. The temporary container shares the worker's `symphony-claude-auth` volume, so its
-Linux credential file survives container replacement. It does not survive deletion of that named
-volume.
+when prompted. Each temporary container shares only that profile's Claude authentication volume,
+so its Linux credential file survives replacement without becoming visible to the other profile.
 
 Check the result without displaying tokens:
 
 ```bash
-sudo symphony-admin auth status
+sudo symphony-admin workers status afarnham
+sudo symphony-admin workers status karbas
 ```
 
 The status command checks both installed backends and exits non-zero if either is unauthenticated.
 An unused backend may therefore report `not logged in`; the backend selected by `agent.backend` must
 report valid authentication.
 
-If both a saved login and `claude_oauth_token` exist, the explicit OAuth-token environment takes
+If both a saved login and the profile's Claude OAuth token exist, the explicit token takes
 precedence. Remove or rotate the unused method during a maintenance window rather than assuming
 which account is active.
 
@@ -405,13 +409,14 @@ differences.
 Run the headless device flow:
 
 ```bash
-sudo symphony-admin auth codex
+sudo symphony-admin workers auth afarnham codex
+sudo symphony-admin workers auth karbas codex
 ```
 
 Open the displayed URL and enter the one-time code. Device authentication must be enabled in the
 ChatGPT account's security settings or by the workspace administrator. The disposable container
-shares the worker's `symphony-codex-auth` volume. Codex is configured for file-backed credential
-storage under `/home/worker/.codex`; treat `auth.json` as a password.
+shares only that profile's Codex authentication volume. Codex is configured for file-backed
+credential storage under `/home/worker/.codex`; treat `auth.json` as a password.
 
 ### OpenAI API billing
 
@@ -419,17 +424,20 @@ API-key authentication uses the OpenAI Platform account and standard API usage b
 included ChatGPT plan allowance. Store the key without putting it in an environment file:
 
 ```bash
-sudo symphony-admin secrets set openai_api_key
+sudo symphony-admin secrets set afarnham_openai_api_key
+sudo symphony-admin secrets set karbas_openai_api_key
 ```
 
-The worker consumes `/run/secrets/openai_api_key` by piping it to `codex login --with-api-key` at
+The selected profile's worker consumes `/run/secrets/openai_api_key` by piping it to
+`codex login --with-api-key` at
 startup with command output suppressed. The key is not placed in Compose environment or command
-arguments. Do not also rely on a persisted ChatGPT login: API-key login updates the shared Codex
-authentication volume. Choose one billing identity and, after removing an API key, run the device
+arguments. Do not also rely on a persisted ChatGPT login: API-key login updates that profile's
+Codex authentication volume. Choose one billing identity and, after removing an API key, run the device
 login again before expecting subscription authentication. Verify the active method after startup:
 
 ```bash
-sudo symphony-admin auth status
+sudo symphony-admin workers status afarnham
+sudo symphony-admin workers status karbas
 ```
 
 For trusted enterprise automation, a managed Codex access token may be preferable when the
@@ -457,7 +465,7 @@ and repeat the smoke test.
 | `SYMPHONY_LOG_MAX_FILES` | `5` | Retained segments per container |
 
 The read-only worker root filesystem uses named volumes for agent authentication, workspaces, and
-package-manager caches (`symphony-worker-cache` and `symphony-worker-local`). Ephemeral SSH files
+profile-specific package-manager cache and local-state volumes. Ephemeral SSH files
 live in a bounded tmpfs; the stable host identity comes from the provisioned secret pair. Cache
 volumes are disposable; authentication volumes are not. The workspace and log volumes can grow
 without an application-level quota, and container stdout also consumes host storage. Monitor the
@@ -471,9 +479,9 @@ Their checked-in ceilings are `256m` and `1g`; tmpfs use also competes with each
 limit. Increase a tmpfs limit only alongside the corresponding memory limit when a verified build
 needs more temporary space. Persistent work belongs in `/workspaces`, not `/tmp`.
 
-The one-shot `volume-init` service makes the six writable volumes owned by UID/GID 10001 before the
-unprivileged services start. It receives no secrets or network and drops every capability except
-`CHOWN`. A non-zero exit prevents both long-running services from starting.
+The one-shot `volume-init` service makes all profile-specific writable volumes owned by UID/GID
+10001 before the unprivileged services start. It receives no secrets or network and drops every
+capability except `CHOWN`. A non-zero exit prevents the long-running services from starting.
 
 Do not solve capacity pressure by mounting the host root, a broad home directory, or the Docker
 socket into the worker. Add a narrowly scoped volume or increase a reviewed resource limit.
@@ -511,9 +519,12 @@ sudo systemctl status symphony.service --no-pager
 cd /opt/symphony
 sudo docker compose --env-file /etc/symphony/deployment.env ps
 curl --fail --silent --show-error http://127.0.0.1:4000/api/v1/state
-sudo symphony-admin auth status
+sudo symphony-admin workers status afarnham
+sudo symphony-admin workers status karbas
 sudo docker compose --env-file /etc/symphony/deployment.env exec symphony \
-  ssh -F /tmp/symphony-ssh/config agent-worker true
+  ssh -F /tmp/symphony-ssh/config agent-worker-afarnham true
+sudo docker compose --env-file /etc/symphony/deployment.env exec symphony \
+  ssh -F /tmp/symphony-ssh/config agent-worker-karbas true
 ```
 
 If the dashboard is needed from an administrator workstation, tunnel it instead of opening the VM
@@ -529,15 +540,18 @@ Run an end-to-end smoke test with a low-risk issue in the configured repository:
 
 1. Add the issue to Project 2 in `Backlog`; confirm Symphony does not claim it.
 2. Move only its Status to `Ready`; do not add a routing label.
-3. Confirm it moves to `In Progress`, an agent starts on `agent-worker`, and the dashboard reports
-   that worker and a path under `/workspaces`.
-4. Confirm the agent can clone, create a branch, push, and open a pull request using only the worker
+3. Assign it to `afarnham`, leave Executor blank, and have `afarnham` move it to `Ready`. Confirm
+   Codex starts on `agent-worker-afarnham`.
+4. Repeat with an issue assigned and readied by `karbas`; confirm Claude starts on
+   `agent-worker-karbas`. Then set Executor to the non-default backend and confirm only the backend,
+   not the worker profile, changes.
+5. Confirm the agent can clone, create a branch, push, and open a pull request using only the worker
    credential.
-5. Confirm tracker comments and Status transitions succeed through the session-scoped tools.
-6. Confirm successful work moves to `In Review`.
-7. For the blocker path, use a test requiring unavailable human input. Confirm it moves to
+6. Confirm tracker comments and Status transitions succeed through the session-scoped tools.
+7. Confirm successful work moves to `In Review`.
+8. For the blocker path, use a test requiring unavailable human input. Confirm it moves to
    `Blocked`, then resolve the input and move it back to `Ready`.
-8. Inspect logs for accidental GitHub, Claude, Codex, SSH, or MCP token output before accepting the
+9. Inspect logs for accidental GitHub, Claude, Codex, SSH, or MCP token output before accepting the
    deployment.
 
 Do not retire the prior deployment until this smoke test passes on the VM.
@@ -555,7 +569,7 @@ Application and worker output is available through Compose:
 ```bash
 cd /opt/symphony
 sudo docker compose --env-file /etc/symphony/deployment.env logs --tail 200 symphony
-sudo docker compose --env-file /etc/symphony/deployment.env logs --tail 200 agent-worker
+sudo docker compose --env-file /etc/symphony/deployment.env logs --tail 200 agent-worker-afarnham agent-worker-karbas
 sudo docker compose --env-file /etc/symphony/deployment.env logs --follow
 ```
 
@@ -570,7 +584,7 @@ Useful failure isolation order:
 2. `docker compose config --quiet` for interpolation and mount errors.
 3. `docker compose ps` for the failing health check.
 4. Service logs for workflow validation, GitHub preflight, SSH, or agent-auth failures.
-5. `symphony-admin auth status` inside the same worker image and volumes used in production.
+5. `symphony-admin workers status <profile>` inside each production worker and auth volume.
 
 Do not enable shell tracing (`set -x`) while inspecting entrypoints or authentication.
 
@@ -637,20 +651,21 @@ are empty. To switch away from an explicit model credential, revoke it at the pr
 active agents, empty its protected source file, and recreate the stack:
 
 ```bash
-sudo truncate --size 0 /etc/symphony/secrets/claude_oauth_token
-sudo truncate --size 0 /etc/symphony/secrets/openai_api_key
+sudo truncate --size 0 /etc/symphony/secrets/afarnham_claude_oauth_token
+sudo truncate --size 0 /etc/symphony/secrets/afarnham_openai_api_key
 sudo systemctl restart symphony.service
 ```
 
-Run only the line for the credential being removed. If persistent login state must also be cleared,
+Replace `afarnham` with `karbas` when rotating the other profile. Run only the line for the
+credential being removed. If persistent login state must also be cleared,
 use a disposable worker container after emptying the explicit secret:
 
 ```bash
 cd /opt/symphony
 sudo docker compose --env-file /etc/symphony/deployment.env run --rm --no-deps \
-  agent-worker claude auth logout
+  agent-worker-afarnham claude auth logout
 sudo docker compose --env-file /etc/symphony/deployment.env run --rm --no-deps \
-  agent-worker codex logout
+  agent-worker-afarnham codex logout
 ```
 
 These logout commands remove the saved session from the named authentication volume. Run only the
@@ -668,7 +683,7 @@ Back up these non-secret recovery inputs:
 Treat these as credentials, not ordinary backups:
 
 - `/etc/symphony/secrets`.
-- `symphony-claude-auth` and `symphony-codex-auth` volumes.
+- Every profile-specific Claude and Codex authentication volume.
 - Worker Git credential material.
 - Root's container-registry login state when private images are used.
 

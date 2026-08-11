@@ -1120,6 +1120,13 @@ defmodule SymphonyElixir.CoreTest do
     settings_snapshot = Config.settings!()
     {:ok, tracker_binding} = SymphonyElixir.Tracker.bind_config(settings_snapshot.tracker)
 
+    execution_route = %SymphonyElixir.ExecutionRoute{
+      profile: "karbas",
+      ready_actor: "karbas",
+      backend: "claude",
+      worker_hosts: ["worker@agent-worker-karbas"]
+    }
+
     running_entry = %{
       pid: self(),
       ref: ref,
@@ -1128,7 +1135,9 @@ defmodule SymphonyElixir.CoreTest do
       issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
       started_at: DateTime.utc_now(),
       settings_snapshot: settings_snapshot,
-      tracker_binding: tracker_binding
+      tracker_binding: tracker_binding,
+      execution_route: execution_route,
+      backend: "claude"
     }
 
     :sys.replace_state(pid, fn _ ->
@@ -1151,6 +1160,8 @@ defmodule SymphonyElixir.CoreTest do
              due_at_ms: due_at_ms,
              identifier: "MT-559",
              error: "agent exited: :boom",
+             backend: "claude",
+             execution_route: ^execution_route,
              settings_snapshot: ^settings_snapshot,
              tracker_binding: ^tracker_binding
            } =

@@ -279,6 +279,9 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "worker_host" => nil,
                  "workspace_path" => nil,
                  "backend" => "codex",
+                 "profile" => "afarnham",
+                 "ready_actor" => "afarnham",
+                 "eligible_worker_hosts" => ["worker@agent-worker-afarnham"],
                  "session_id" => "thread-http",
                  "turn_id" => "turn-http",
                  "transport" => %{
@@ -307,6 +310,9 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "due_at" => state_payload["retrying"] |> List.first() |> Map.fetch!("due_at"),
                  "error" => "boom",
                  "backend" => "codex",
+                 "profile" => "afarnham",
+                 "ready_actor" => "afarnham",
+                 "eligible_worker_hosts" => ["worker@agent-worker-afarnham"],
                  "worker_host" => nil,
                  "workspace_path" => nil
                }
@@ -321,6 +327,9 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "worker_host" => "dm-dev2",
                  "workspace_path" => "/workspaces/MT-BLOCKED",
                  "backend" => "codex",
+                 "profile" => "afarnham",
+                 "ready_actor" => "afarnham",
+                 "eligible_worker_hosts" => ["worker@agent-worker-afarnham"],
                  "session_id" => "thread-blocked",
                  "transport" => %{
                    "mcp" => %{"enabled" => true, "health" => "stopped", "transport" => "ssh_reverse_tunnel"},
@@ -363,6 +372,9 @@ defmodule SymphonyElixir.ExtensionsTest do
                "worker_host" => nil,
                "workspace_path" => nil,
                "backend" => "codex",
+               "profile" => "afarnham",
+               "ready_actor" => "afarnham",
+               "eligible_worker_hosts" => ["worker@agent-worker-afarnham"],
                "session_id" => "thread-http",
                "turn_id" => "turn-http",
                "transport" => %{
@@ -556,6 +568,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Copy ID"
     assert html =~ "Agent update"
     assert html =~ "MCP healthy · tunnel healthy"
+    assert html =~ "afarnham · codex"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
@@ -571,6 +584,9 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_url: "javascript:alert('nope')",
           state: "In Progress",
           backend: :codex,
+          profile: "afarnham",
+          ready_actor: "afarnham",
+          eligible_worker_hosts: ["worker@agent-worker-afarnham"],
           session_id: "thread-http",
           turn_id: "turn-http",
           turn_count: 8,
@@ -705,6 +721,9 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_url: "https://example.org/issues/MT-HTTP",
           state: "In Progress",
           backend: :codex,
+          profile: "afarnham",
+          ready_actor: "afarnham",
+          eligible_worker_hosts: ["worker@agent-worker-afarnham"],
           session_id: "thread-http",
           turn_id: "turn-http",
           mcp: %{enabled: true, health: :healthy, transport: :ssh_reverse_tunnel},
@@ -732,6 +751,9 @@ defmodule SymphonyElixir.ExtensionsTest do
           attempt: 2,
           due_in_ms: 2_000,
           backend: :codex,
+          profile: "afarnham",
+          ready_actor: "afarnham",
+          eligible_worker_hosts: ["worker@agent-worker-afarnham"],
           error: "boom"
         }
       ],
@@ -745,6 +767,9 @@ defmodule SymphonyElixir.ExtensionsTest do
           worker_host: "dm-dev2",
           workspace_path: "/workspaces/MT-BLOCKED",
           backend: :codex,
+          profile: "afarnham",
+          ready_actor: "afarnham",
+          eligible_worker_hosts: ["worker@agent-worker-afarnham"],
           session_id: "thread-blocked",
           mcp: %{enabled: true, health: :stopped, transport: :ssh_reverse_tunnel},
           ssh_tunnel: %{health: :stopped, remote_port: 41_234},

@@ -45,8 +45,10 @@ github_project_token=$(openssl rand -hex 24)
 github_worker_token=$(openssl rand -hex 24)
 printf '%s\n' "$github_project_token" >"$secrets_dir/github_project_token"
 printf '%s\n' "$github_worker_token" >"$secrets_dir/github_worker_token"
-: >"$secrets_dir/claude_oauth_token"
-: >"$secrets_dir/openai_api_key"
+for profile in afarnham karbas; do
+  : >"$secrets_dir/${profile}_claude_oauth_token"
+  : >"$secrets_dir/${profile}_openai_api_key"
+done
 # Match production's bind-mounted Compose secret contract. This also exercises
 # OpenSSH StrictModes for the directly mounted authorized-keys file.
 as_root chown 10001:10001 "$secrets_dir"/*
@@ -76,24 +78,32 @@ curl --fail --silent --show-error --max-time 5 \
   "http://127.0.0.1:${SYMPHONY_PORT:-4000}/api/v1/state" >/dev/null
 
 [ "$(compose exec -T symphony id -u)" = "10001" ]
-[ "$(compose exec -T agent-worker id -u)" = "10001" ]
+[ "$(compose exec -T agent-worker-afarnham id -u)" = "10001" ]
+[ "$(compose exec -T agent-worker-karbas id -u)" = "10001" ]
 
-compose exec -T symphony ssh agent-worker \
+compose exec -T symphony ssh agent-worker-afarnham \
   'test "$PWD" = /workspaces && test "$GH_CONFIG_DIR" = /tmp/symphony-gh && test "$XDG_CACHE_HOME" = /home/worker/.cache && test "$NPM_CONFIG_CACHE" = /home/worker/.cache/npm'
-compose exec -T symphony ssh agent-worker 'gh auth token >/dev/null'
-compose exec -T symphony ssh agent-worker \
+compose exec -T symphony ssh agent-worker-afarnham 'gh auth token >/dev/null'
+compose exec -T symphony ssh agent-worker-afarnham \
   'printf "protocol=https\nhost=github.com\n\n" | git credential fill >/dev/null'
-compose exec -T symphony ssh agent-worker \
+compose exec -T symphony ssh agent-worker-afarnham \
   'test -d /run/sshd && npm cache verify >/dev/null && pnpm store path >/dev/null'
-compose exec -T symphony ssh agent-worker \
+compose exec -T symphony ssh agent-worker-afarnham \
   'test "$(git config --get user.name)" = "Symphony Agent" && test "$(git config --get user.email)" = "symphony-agent@users.noreply.github.com"'
-compose exec -T symphony ssh agent-worker \
+compose exec -T symphony ssh agent-worker-afarnham \
   'repo=$(mktemp -d /workspaces/smoke-commit.XXXXXX) && git -C "$repo" init -q && printf smoke >"$repo/check" && git -C "$repo" add check && git -C "$repo" commit -qm "test: smoke worker commit" && rm -rf -- "$repo"'
 
+compose exec -T agent-worker-afarnham touch /home/worker/.codex/afarnham-only
+compose exec -T agent-worker-afarnham touch /home/worker/.claude/afarnham-only
+compose exec -T agent-worker-afarnham touch /workspaces/afarnham-only
+compose exec -T agent-worker-karbas test ! -e /home/worker/.codex/afarnham-only
+compose exec -T agent-worker-karbas test ! -e /home/worker/.claude/afarnham-only
+compose exec -T agent-worker-karbas test ! -e /workspaces/afarnham-only
+
 compose exec -T --detach symphony \
-  ssh -N -R 127.0.0.1:49123:127.0.0.1:4000 agent-worker
+  ssh -N -R 127.0.0.1:49123:127.0.0.1:4000 agent-worker-afarnham
 sleep 2
-compose exec -T agent-worker \
+compose exec -T agent-worker-afarnham \
   curl --fail --silent --show-error --max-time 5 http://127.0.0.1:49123/api/v1/state >/dev/null
 
 if compose logs | grep -F "$github_project_token" >/dev/null || \

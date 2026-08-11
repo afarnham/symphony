@@ -10,7 +10,7 @@ SECRETS_ROOT="${SYMPHONY_SECRETS_DIR:-${SYMPHONY_SECRETS_ROOT:-$DEFAULT_SECRETS_
 COMPOSE_FILE="${SYMPHONY_COMPOSE_FILE:-/opt/symphony/compose.yaml}"
 DEPLOYMENT_ENV_FILE="${SYMPHONY_ENV_FILE:-/etc/symphony/deployment.env}"
 COMPOSE_PROJECT="${SYMPHONY_COMPOSE_PROJECT:-symphony}"
-WORKER_SERVICE="${SYMPHONY_WORKER_SERVICE:-agent-worker}"
+WORKER_PROFILES="${SYMPHONY_WORKER_PROFILES:-afarnham,karbas}"
 VOLUME_INIT_SERVICE="${SYMPHONY_VOLUME_INIT_SERVICE:-volume-init}"
 CONTAINER_CLI="${SYMPHONY_CONTAINER_CLI:-docker}"
 SECRET_UID="${SYMPHONY_SECRET_UID:-10001}"
@@ -55,15 +55,16 @@ Usage:
   symphony-admin secrets set <name> [--stdin]
   symphony-admin secrets list
   symphony-admin secrets verify
-  symphony-admin auth claude
-  symphony-admin auth codex
-  symphony-admin auth status
+  symphony-admin workers list
+  symphony-admin workers auth <github-login> claude
+  symphony-admin workers auth <github-login> codex
+  symphony-admin workers status <github-login>
 
 Settable secret names:
   github_project_token
   github_worker_token
-  claude_oauth_token
-  openai_api_key
+  <github-login>_claude_oauth_token
+  <github-login>_openai_api_key
 
 Secret values are accepted only from a hidden terminal prompt or standard input.
 EOF
@@ -85,10 +86,40 @@ validate_configuration() {
   [[ -n "$COMPOSE_PROJECT" ]] || die "SYMPHONY_COMPOSE_PROJECT must not be empty"
   [[ "$SECRET_UID" =~ ^[0-9]+$ ]] || die "SYMPHONY_SECRET_UID must be numeric"
   [[ "$SECRET_GID" =~ ^[0-9]+$ ]] || die "SYMPHONY_SECRET_GID must be numeric"
-  [[ "$WORKER_SERVICE" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] ||
-    die "SYMPHONY_WORKER_SERVICE contains invalid characters"
+  validate_worker_profiles
   [[ "$VOLUME_INIT_SERVICE" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] ||
     die "SYMPHONY_VOLUME_INIT_SERVICE contains invalid characters"
+}
+
+validate_worker_profiles() {
+  local profile
+
+  while IFS= read -r profile; do
+    [[ "$profile" =~ ^[a-z0-9][a-z0-9-]{0,38}$ && "$profile" != *- ]] ||
+      die "SYMPHONY_WORKER_PROFILES contains an invalid GitHub login"
+  done < <(configured_worker_profiles)
+}
+
+configured_worker_profiles() {
+  printf '%s\n' "$WORKER_PROFILES" | tr ',' '\n'
+}
+
+is_configured_worker_profile() {
+  local requested=$1 profile
+
+  while IFS= read -r profile; do
+    if [[ "$profile" == "$requested" ]]; then
+      return 0
+    fi
+  done < <(configured_worker_profiles)
+
+  return 1
+}
+
+worker_service() {
+  local profile=$1
+  is_configured_worker_profile "$profile" || die "unknown worker profile: $profile"
+  printf 'agent-worker-%s\n' "$profile"
 }
 
 require_default_root_privileges() {
@@ -99,18 +130,32 @@ require_default_root_privileges() {
 
 is_settable_secret() {
   case "$1" in
-    github_project_token | github_worker_token | claude_oauth_token | openai_api_key) return 0 ;;
+    github_project_token | github_worker_token) return 0 ;;
+    *_claude_oauth_token | *_openai_api_key) is_profile_secret "$1" ;;
     *) return 1 ;;
   esac
 }
 
+is_profile_secret() {
+  local name=$1 profile
+
+  case "$name" in
+    *_claude_oauth_token) profile=${name%_claude_oauth_token} ;;
+    *_openai_api_key) profile=${name%_openai_api_key} ;;
+    *) return 1 ;;
+  esac
+
+  is_configured_worker_profile "$profile"
+}
+
 is_known_secret_file() {
   case "$1" in
-    github_project_token | github_worker_token | claude_oauth_token | openai_api_key | \
+    github_project_token | github_worker_token | \
       worker_ssh_private_key | worker_ssh_authorized_key | \
       worker_ssh_host_private_key | worker_ssh_host_public_key)
       return 0
       ;;
+    *_claude_oauth_token | *_openai_api_key) is_profile_secret "$1" ;;
     *) return 1 ;;
   esac
 }
@@ -325,6 +370,7 @@ generate_worker_ssh_host_key() {
 }
 
 secrets_init() {
+  local profile
   require_default_root_privileges
 
   if [[ -L "$SECRETS_ROOT" ]]; then
@@ -339,8 +385,10 @@ secrets_init() {
 
   create_empty_file_if_missing github_project_token
   create_empty_file_if_missing github_worker_token
-  create_empty_file_if_missing claude_oauth_token
-  create_empty_file_if_missing openai_api_key
+  while IFS= read -r profile; do
+    create_empty_file_if_missing "${profile}_claude_oauth_token"
+    create_empty_file_if_missing "${profile}_openai_api_key"
+  done < <(configured_worker_profiles)
   generate_worker_ssh_key
   generate_worker_ssh_host_key
 
@@ -450,14 +498,12 @@ secret_file_state() {
 }
 
 secrets_list() {
-  local name state
+  local name state profile
   require_secrets_root
 
   for name in \
     github_project_token \
     github_worker_token \
-    claude_oauth_token \
-    openai_api_key \
     worker_ssh_private_key \
     worker_ssh_authorized_key \
     worker_ssh_host_private_key \
@@ -465,6 +511,13 @@ secrets_list() {
     state=$(secret_file_state "$name")
     printf '%-28s %s\n' "$name" "$state"
   done
+
+  while IFS= read -r profile; do
+    for name in "${profile}_claude_oauth_token" "${profile}_openai_api_key"; do
+      state=$(secret_file_state "$name")
+      printf '%-28s %s\n' "$name" "$state"
+    done
+  done < <(configured_worker_profiles)
 }
 
 verify_file_security() {
@@ -524,7 +577,7 @@ verify_ssh_key_pair() {
 }
 
 secrets_verify() {
-  local failed=0 mode uid
+  local failed=0 mode uid profile
   require_secrets_root
 
   mode=$(file_mode "$SECRETS_ROOT")
@@ -545,8 +598,10 @@ secrets_verify() {
   verify_file_security worker_ssh_authorized_key required || failed=1
   verify_file_security worker_ssh_host_private_key required || failed=1
   verify_file_security worker_ssh_host_public_key required || failed=1
-  verify_file_security claude_oauth_token optional || failed=1
-  verify_file_security openai_api_key optional || failed=1
+  while IFS= read -r profile; do
+    verify_file_security "${profile}_claude_oauth_token" optional || failed=1
+    verify_file_security "${profile}_openai_api_key" optional || failed=1
+  done < <(configured_worker_profiles)
 
   if [[ "$failed" -eq 0 ]]; then
     verify_ssh_key_pair worker_ssh_private_key worker_ssh_authorized_key || failed=1
@@ -579,22 +634,36 @@ compose_run() {
 }
 
 auth_claude() {
-  compose_run "$WORKER_SERVICE" claude auth login
+  local profile=$1 service
+  service=$(worker_service "$profile")
+  compose_run "$service" claude auth login
 }
 
 auth_codex() {
-  compose_run "$WORKER_SERVICE" codex login --device-auth
+  local profile=$1 service
+  service=$(worker_service "$profile")
+  compose_run "$service" codex login --device-auth
 }
 
 auth_status() {
+  local profile=$1 service
   local failed=0
+  service=$(worker_service "$profile")
 
-  printf 'Claude authentication:\n'
-  compose_run "$WORKER_SERVICE" claude auth status || failed=1
-  printf '\nCodex authentication:\n'
-  compose_run "$WORKER_SERVICE" codex login status || failed=1
+  printf 'Claude authentication for %s:\n' "$profile"
+  compose_run "$service" claude auth status || failed=1
+  printf '\nCodex authentication for %s:\n' "$profile"
+  compose_run "$service" codex login status || failed=1
 
   return "$failed"
+}
+
+workers_list() {
+  local profile
+
+  while IFS= read -r profile; do
+    printf '%-39s %s\n' "$profile" "$(worker_service "$profile")"
+  done < <(configured_worker_profiles)
 }
 
 main() {
@@ -619,17 +688,21 @@ main() {
       [[ $# -eq 2 ]] || die "secrets verify takes no arguments"
       secrets_verify
       ;;
-    auth:claude)
-      [[ $# -eq 2 ]] || die "auth claude takes no arguments"
-      auth_claude
+    workers:list)
+      [[ $# -eq 2 ]] || die "workers list takes no arguments"
+      workers_list
       ;;
-    auth:codex)
-      [[ $# -eq 2 ]] || die "auth codex takes no arguments"
-      auth_codex
+    workers:auth)
+      [[ $# -eq 4 ]] || die "workers auth requires a GitHub login and provider"
+      case "$4" in
+        claude) auth_claude "$3" ;;
+        codex) auth_codex "$3" ;;
+        *) die "workers auth provider must be claude or codex" ;;
+      esac
       ;;
-    auth:status)
-      [[ $# -eq 2 ]] || die "auth status takes no arguments"
-      auth_status
+    workers:status)
+      [[ $# -eq 3 ]] || die "workers status requires a GitHub login"
+      auth_status "$3"
       ;;
     *)
       usage >&2

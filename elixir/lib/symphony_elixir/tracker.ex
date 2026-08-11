@@ -46,18 +46,19 @@ defmodule SymphonyElixir.Tracker do
     adapter().fetch_issues_by_ids(issue_ids)
   end
 
-  @spec fetch_bound_issues_by_ids(map(), [String.t()]) ::
+  @spec fetch_bound_issues_by_ids(map(), [String.t()], keyword()) ::
           {:ok, [Issue.t()]} | {:error, term()}
   def fetch_bound_issues_by_ids(
         %{adapter: selected_adapter, tracker_settings: tracker_settings},
-        issue_ids
+        issue_ids,
+        opts \\ []
       )
-      when is_list(issue_ids) do
+      when is_list(issue_ids) and is_list(opts) do
     if Code.ensure_loaded?(selected_adapter) and
          function_exported?(selected_adapter, :fetch_issues_by_ids, 2) do
       selected_adapter.fetch_issues_by_ids(
         issue_ids,
-        tracker_settings: tracker_settings
+        Keyword.put(opts, :tracker_settings, tracker_settings)
       )
     else
       selected_adapter.fetch_issues_by_ids(issue_ids)

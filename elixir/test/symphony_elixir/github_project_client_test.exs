@@ -67,6 +67,24 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
     end
   end
 
+  describe "executor field discovery" do
+    test "requires a Claude and Codex single-select field" do
+      assert {:ok, executor} =
+               Normalizer.resolve_executor_field([executor_field()], " executor ")
+
+      assert executor.field_id == 8
+      assert executor.option_ids == %{"claude" => "executor-claude", "codex" => "executor-codex"}
+
+      assert {:error, {:github_project_executor_field_not_found, "Missing"}} =
+               Normalizer.resolve_executor_field([executor_field()], "Missing")
+
+      invalid = put_in(executor_field()["options"], [%{"id" => "executor-claude", "name" => "Claude"}])
+
+      assert {:error, {:github_project_executor_options_invalid, ["claude"]}} =
+               Normalizer.resolve_executor_field([invalid], "Executor")
+    end
+  end
+
   describe "project item normalization" do
     test "uses project-item identity and project Status while retaining issue metadata" do
       assert {:ok, %Issue{} = issue} =
@@ -79,6 +97,8 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
       assert issue.state == "Ready"
       assert issue.url == "https://github.test/GHW-Consulting/app-tastemap/issues/141"
       assert issue.assignee_id == "octocat"
+      assert issue.assignee_ids == ["octocat", "hubot"]
+      assert issue.requested_backend == nil
       assert issue.labels == ["bug", "platform"]
       assert issue.dispatchable
       assert %DateTime{} = issue.created_at
@@ -151,6 +171,32 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
                  normalization_context()
                )
     end
+  end
+
+  test "normalizes an explicit executor selection" do
+    context =
+      Map.put(
+        normalization_context(),
+        :executor,
+        elem(Normalizer.resolve_executor_field([executor_field()], "Executor"), 1)
+      )
+
+    item =
+      raw_item(50, "Ready")
+      |> Map.update!("fields", fn fields ->
+        fields ++
+          [
+            %{
+              "id" => 8,
+              "name" => "Executor",
+              "data_type" => "single_select",
+              "value" => %{"id" => "executor-claude", "name" => %{"raw" => "Claude"}}
+            }
+          ]
+      end)
+
+    assert {:ok, %Issue{requested_backend: "claude"}} =
+             Normalizer.normalize_item(item, context)
   end
 
   describe "client discovery and polling" do
@@ -397,6 +443,83 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
 
       assert issue.title == "Issue 171"
       assert issue.labels == ["bug", "platform"]
+    end
+  end
+
+  describe "dispatch routing enrichment" do
+    test "pages status history and attaches the latest matching Ready actor" do
+      test_pid = self()
+
+      request_fun = fn method, path, params, body, _settings ->
+        send(test_pid, {:routing_request, method, path, params, body})
+
+        case {method, path, params, body} do
+          {"GET", "/orgs/GHW-Consulting/projectsV2/12/items/41", %{"fields" => "7,8"}, nil} ->
+            ok_response(%{"value" => raw_item(41, "Ready")})
+
+          {"POST", "/graphql", %{}, %{"variables" => %{"before" => nil}}} ->
+            routing_response(
+              [routing_event("OTHER_PROJECT", "Ready", "someone-else")],
+              true,
+              "previous-page"
+            )
+
+          {"POST", "/graphql", %{}, %{"variables" => %{"before" => "previous-page"}}} ->
+            routing_response(
+              [
+                routing_event("PVT_PROJECT", "Backlog", "afarnham"),
+                routing_event("PVT_PROJECT", "Ready", "afarnham")
+              ],
+              false,
+              nil
+            )
+        end
+      end
+
+      assert {:ok,
+              [
+                %Issue{
+                  ready_actor_id: "afarnham",
+                  ready_actor_automated: false,
+                  assignee_ids: ["octocat", "hubot"]
+                }
+              ]} =
+               Client.fetch_issues_by_ids(["41"], tracker_settings(),
+                 snapshot: routing_snapshot(),
+                 include_routing: true,
+                 request_fun: request_fun
+               )
+
+      assert_received {:routing_request, "POST", "/graphql", %{},
+                       %{
+                         "variables" => %{"before" => nil, "issueId" => "I_141", "pageSize" => 100}
+                       }}
+
+      assert_received {:routing_request, "POST", "/graphql", %{},
+                       %{
+                         "variables" => %{
+                           "before" => "previous-page",
+                           "issueId" => "I_141",
+                           "pageSize" => 100
+                         }
+                       }}
+    end
+
+    test "fails closed when no matching Ready transition exists" do
+      request_fun = fn
+        "GET", _path, _params, nil, _settings ->
+          ok_response(%{"value" => raw_item(41, "Ready")})
+
+        "POST", "/graphql", %{}, _body, _settings ->
+          routing_response([], false, nil)
+      end
+
+      assert {:error, :github_project_ready_transition_not_found} =
+               Client.fetch_issues_by_ids(["41"], tracker_settings(),
+                 snapshot: routing_snapshot(),
+                 include_routing: true,
+                 request_fun: request_fun
+               )
     end
   end
 
@@ -731,6 +854,14 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
     }
   end
 
+  defp routing_snapshot do
+    Map.merge(snapshot(), %{
+      project_node_id: "PVT_PROJECT",
+      executor: elem(Normalizer.resolve_executor_field([executor_field()], "Executor"), 1),
+      routing_ready_state: "Ready"
+    })
+  end
+
   defp normalization_context do
     snapshot()
   end
@@ -755,6 +886,18 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
           "id" => "option-cancelled",
           "name" => %{"raw" => "Cancelled", "html" => "Cancelled"}
         }
+      ]
+    }
+  end
+
+  defp executor_field do
+    %{
+      "id" => 8,
+      "name" => "Executor",
+      "data_type" => "single_select",
+      "options" => [
+        %{"id" => "executor-claude", "name" => %{"raw" => "Claude", "html" => "Claude"}},
+        %{"id" => "executor-codex", "name" => %{"raw" => "Codex", "html" => "Codex"}}
       ]
     }
   end
@@ -794,7 +937,8 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
       "title" => "Issue #{issue_number}",
       "body" => "Body #{issue_number}",
       "state" => "open",
-      "assignee" => %{"login" => "octocat"},
+      "assignee" => %{"login" => "legacy-first"},
+      "assignees" => [%{"login" => "octocat"}, %{"login" => "hubot"}, %{"login" => "OCTOCAT"}],
       "labels" => [%{"name" => "Bug"}, %{"name" => " platform "}],
       "created_at" => "2026-07-01T12:00:00Z",
       "updated_at" => "2026-08-01T12:00:00Z"
@@ -822,5 +966,31 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
 
   defp ok_response(body, headers \\ %{}) do
     {:ok, %{status: 200, body: body, headers: headers}}
+  end
+
+  defp routing_event(project_node_id, status, actor) do
+    %{
+      "actor" => %{"login" => actor},
+      "createdAt" => "2026-08-11T12:00:00Z",
+      "status" => status,
+      "wasAutomated" => false,
+      "project" => %{"id" => project_node_id, "number" => 12}
+    }
+  end
+
+  defp routing_response(nodes, has_previous_page, start_cursor) do
+    ok_response(%{
+      "data" => %{
+        "node" => %{
+          "timelineItems" => %{
+            "nodes" => nodes,
+            "pageInfo" => %{
+              "hasPreviousPage" => has_previous_page,
+              "startCursor" => start_cursor
+            }
+          }
+        }
+      }
+    })
   end
 end
