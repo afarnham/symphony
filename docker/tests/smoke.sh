@@ -81,16 +81,16 @@ curl --fail --silent --show-error --max-time 5 \
 [ "$(compose exec -T agent-worker-afarnham id -u)" = "10001" ]
 [ "$(compose exec -T agent-worker-karbas id -u)" = "10001" ]
 
-compose exec -T symphony ssh agent-worker-afarnham \
+compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'test "$PWD" = /workspaces && test "$GH_CONFIG_DIR" = /tmp/symphony-gh && test "$XDG_CACHE_HOME" = /home/worker/.cache && test "$NPM_CONFIG_CACHE" = /home/worker/.cache/npm'
-compose exec -T symphony ssh agent-worker-afarnham 'gh auth token >/dev/null'
-compose exec -T symphony ssh agent-worker-afarnham \
+compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham 'gh auth token >/dev/null'
+compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'printf "protocol=https\nhost=github.com\n\n" | git credential fill >/dev/null'
-compose exec -T symphony ssh agent-worker-afarnham \
+compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'test -d /run/sshd && npm cache verify >/dev/null && pnpm store path >/dev/null'
-compose exec -T symphony ssh agent-worker-afarnham \
+compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'test "$(git config --get user.name)" = "Symphony Agent" && test "$(git config --get user.email)" = "symphony-agent@users.noreply.github.com"'
-compose exec -T symphony ssh agent-worker-afarnham \
+compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'repo=$(mktemp -d /workspaces/smoke-commit.XXXXXX) && git -C "$repo" init -q && printf smoke >"$repo/check" && git -C "$repo" add check && git -C "$repo" commit -qm "test: smoke worker commit" && rm -rf -- "$repo"'
 
 compose exec -T agent-worker-afarnham touch /home/worker/.codex/afarnham-only
@@ -101,7 +101,7 @@ compose exec -T agent-worker-karbas test ! -e /home/worker/.claude/afarnham-only
 compose exec -T agent-worker-karbas test ! -e /workspaces/afarnham-only
 
 compose exec -T --detach symphony \
-  ssh -N -R 127.0.0.1:49123:127.0.0.1:4000 agent-worker-afarnham
+  ssh -F /tmp/symphony-ssh/config -N -R 127.0.0.1:49123:127.0.0.1:4000 agent-worker-afarnham
 sleep 2
 compose exec -T agent-worker-afarnham \
   curl --fail --silent --show-error --max-time 5 http://127.0.0.1:49123/api/v1/state >/dev/null
