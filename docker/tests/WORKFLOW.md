@@ -7,7 +7,7 @@ workspace:
   root: /workspaces
 worker:
   ssh_hosts:
-    - agent-worker
+    - agent-worker-afarnham
   max_concurrent_agents_per_host: 1
 agent:
   backend: codex

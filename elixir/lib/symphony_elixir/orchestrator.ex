@@ -7,7 +7,17 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentEvent, AgentRunner, AgentTurnResult, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{
+    AgentEvent,
+    AgentRunner,
+    AgentTurnResult,
+    Config,
+    ExecutionRoute,
+    StatusDashboard,
+    Tracker,
+    Workspace
+  }
+
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Tracker.Issue
 
@@ -165,6 +175,8 @@ defmodule SymphonyElixir.Orchestrator do
           |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
           |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
           |> maybe_put_runtime_value(:backend, runtime_info[:backend])
+          |> maybe_put_runtime_value(:profile, runtime_info[:profile])
+          |> maybe_put_runtime_value(:ready_actor, runtime_info[:ready_actor])
 
         notify_dashboard()
         {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
@@ -492,7 +504,8 @@ defmodule SymphonyElixir.Orchestrator do
   @doc false
   @spec select_worker_host_for_test(term(), String.t() | nil) :: String.t() | nil | :no_worker_capacity
   def select_worker_host_for_test(%State{} = state, preferred_worker_host) do
-    select_worker_host(state, preferred_worker_host, Config.settings!())
+    settings = Config.settings!()
+    select_worker_host(state, preferred_worker_host, settings, settings.worker.ssh_hosts)
   end
 
   @doc false
@@ -1022,6 +1035,9 @@ defmodule SymphonyElixir.Orchestrator do
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path),
       backend: Map.get(running_entry, :backend),
+      profile: Map.get(running_entry, :profile),
+      ready_actor: Map.get(running_entry, :ready_actor),
+      execution_route: Map.get(running_entry, :execution_route),
       settings_snapshot: Map.get(running_entry, :settings_snapshot),
       tracker_binding: Map.get(running_entry, :tracker_binding),
       session_id: running_entry_session_id(running_entry),
@@ -1157,7 +1173,7 @@ defmodule SymphonyElixir.Orchestrator do
       !Map.has_key?(retry_attempts, issue.id) and
       available_slots(state) > 0 and
       state_slots_available?(issue, running, settings) and
-      worker_slots_available?(state, nil, settings)
+      candidate_worker_slots_available?(state, settings)
   end
 
   defp should_dispatch_issue?(_issue, _state, _active_states, _terminal_states, _settings), do: false
@@ -1279,33 +1295,72 @@ defmodule SymphonyElixir.Orchestrator do
   defp dispatch_context_from_entry(_entry), do: dispatch_context(Config.settings!())
 
   defp dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host, dispatch_context) do
-    case refresh_issue_for_dispatch(issue, dispatch_context) do
-      {:ok, %Issue{} = refreshed_issue} ->
-        do_dispatch_issue(state, refreshed_issue, attempt, preferred_worker_host, dispatch_context)
+    case refresh_issue_for_dispatch(issue, dispatch_context, nil) do
+      {:ok, %Issue{} = refreshed_issue, %ExecutionRoute{} = execution_route} ->
+        do_dispatch_issue(
+          state,
+          refreshed_issue,
+          attempt,
+          preferred_worker_host,
+          dispatch_context,
+          execution_route
+        )
 
       {:skip, _reason} ->
         state
 
+      {:error, reason, execution_route} ->
+        schedule_claim_retry(
+          state,
+          issue,
+          attempt,
+          preferred_worker_host,
+          reason,
+          dispatch_context,
+          execution_route
+        )
+
       {:error, reason} ->
-        schedule_claim_retry(state, issue, attempt, preferred_worker_host, reason, dispatch_context)
+        schedule_claim_retry(
+          state,
+          issue,
+          attempt,
+          preferred_worker_host,
+          reason,
+          dispatch_context,
+          nil
+        )
     end
   end
 
-  defp schedule_claim_retry(state, issue, attempt, preferred_worker_host, reason, dispatch_context) do
+  defp schedule_claim_retry(
+         state,
+         issue,
+         attempt,
+         preferred_worker_host,
+         reason,
+         dispatch_context,
+         execution_route \\ nil
+       ) do
     schedule_issue_retry(state, issue.id, attempt, %{
       identifier: issue.identifier,
       issue_url: issue.url,
       error: "claim failed: #{inspect(reason)}",
-      backend: dispatch_context.settings.agent.backend,
+      backend: route_backend(execution_route, dispatch_context.settings),
       worker_host: preferred_worker_host,
+      execution_route: execution_route,
       settings_snapshot: dispatch_context.settings,
       tracker_binding: dispatch_context.tracker_binding
     })
   end
 
-  defp refresh_issue_for_dispatch(issue, dispatch_context) do
+  defp refresh_issue_for_dispatch(issue, dispatch_context, execution_route) do
     issue_fetcher = fn issue_ids ->
-      Tracker.fetch_bound_issues_by_ids(dispatch_context.tracker_binding, issue_ids)
+      Tracker.fetch_bound_issues_by_ids(
+        dispatch_context.tracker_binding,
+        issue_ids,
+        include_routing: is_nil(execution_route) and ExecutionRoute.enabled?(dispatch_context.settings)
+      )
     end
 
     case revalidate_issue_for_dispatch(
@@ -1314,7 +1369,7 @@ defmodule SymphonyElixir.Orchestrator do
            dispatch_context.settings.tracker
          ) do
       {:ok, %Issue{} = refreshed_issue} ->
-        claim_issue_for_dispatch(refreshed_issue, dispatch_context)
+        resolve_and_claim_issue(refreshed_issue, dispatch_context, execution_route)
 
       {:skip, :missing} ->
         Logger.info("Skipping dispatch; issue no longer active or visible: #{issue_context(issue)}")
@@ -1330,6 +1385,28 @@ defmodule SymphonyElixir.Orchestrator do
         {:error, reason}
     end
   end
+
+  defp resolve_and_claim_issue(refreshed_issue, dispatch_context, execution_route) do
+    with {:ok, resolved_route} <-
+           resolve_execution_route(refreshed_issue, dispatch_context.settings, execution_route) do
+      format_claim_result(
+        claim_issue_for_dispatch(refreshed_issue, dispatch_context),
+        resolved_route
+      )
+    end
+  end
+
+  defp format_claim_result({:ok, claimed_issue}, resolved_route),
+    do: {:ok, claimed_issue, resolved_route}
+
+  defp format_claim_result({:error, reason}, resolved_route),
+    do: {:error, reason, resolved_route}
+
+  defp resolve_execution_route(_issue, _settings, %ExecutionRoute{} = execution_route),
+    do: {:ok, execution_route}
+
+  defp resolve_execution_route(%Issue{} = issue, settings, nil),
+    do: ExecutionRoute.resolve(issue, settings)
 
   defp claim_issue_for_dispatch(%Issue{} = issue, dispatch_context) do
     tracker_settings = dispatch_context.settings.tracker
@@ -1380,13 +1457,35 @@ defmodule SymphonyElixir.Orchestrator do
   defp confirm_claim_transition(other, _normalized_working_state, _working_state),
     do: {:error, {:claim_transition_failed, {:invalid_transition_response, other}}}
 
-  defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host, dispatch_context) do
+  defp do_dispatch_issue(
+         %State{} = state,
+         issue,
+         attempt,
+         preferred_worker_host,
+         dispatch_context,
+         %ExecutionRoute{} = execution_route
+       ) do
     recipient = self()
 
-    case select_worker_host(state, preferred_worker_host, dispatch_context.settings) do
+    case select_worker_host(
+           state,
+           preferred_worker_host,
+           dispatch_context.settings,
+           execution_route.worker_hosts
+         ) do
       :no_worker_capacity ->
-        Logger.debug("No SSH worker slots available for #{issue_context(issue)} preferred_worker_host=#{inspect(preferred_worker_host)}")
-        state
+        Logger.debug("No SSH worker slots available for #{issue_context(issue)} profile=#{execution_route.profile || "default"} preferred_worker_host=#{inspect(preferred_worker_host)}")
+
+        schedule_issue_retry(state, issue.id, attempt, %{
+          identifier: issue.identifier,
+          issue_url: issue.url,
+          error: "no worker capacity for execution profile",
+          backend: execution_route.backend,
+          worker_host: preferred_worker_host,
+          execution_route: execution_route,
+          settings_snapshot: dispatch_context.settings,
+          tracker_binding: dispatch_context.tracker_binding
+        })
 
       worker_host ->
         spawn_issue_on_worker_host(
@@ -1395,7 +1494,8 @@ defmodule SymphonyElixir.Orchestrator do
           attempt,
           recipient,
           worker_host,
-          dispatch_context
+          dispatch_context,
+          execution_route
         )
     end
   end
@@ -1406,7 +1506,8 @@ defmodule SymphonyElixir.Orchestrator do
          attempt,
          recipient,
          worker_host,
-         dispatch_context
+         dispatch_context,
+         %ExecutionRoute{} = execution_route
        ) do
     settings = dispatch_context.settings
 
@@ -1414,13 +1515,16 @@ defmodule SymphonyElixir.Orchestrator do
            AgentRunner.run(issue, recipient,
              attempt: attempt,
              worker_host: worker_host,
+             execution_route: execution_route,
              settings_snapshot: settings
            )
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
 
-        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+        Logger.info(
+          "Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} profile=#{execution_route.profile || "default"} backend=#{execution_route.backend} worker_host=#{worker_host || "local"}"
+        )
 
         running =
           Map.put(state.running, issue.id, %{
@@ -1432,11 +1536,14 @@ defmodule SymphonyElixir.Orchestrator do
             workspace_path: nil,
             session_id: nil,
             turn_id: nil,
-            backend: settings.agent.backend,
+            backend: execution_route.backend,
+            profile: execution_route.profile,
+            ready_actor: execution_route.ready_actor,
+            execution_route: execution_route,
             settings_snapshot: settings,
             tracker_binding: dispatch_context.tracker_binding,
             cancellation_pid: nil,
-            stall_timeout_ms: backend_stall_timeout(settings),
+            stall_timeout_ms: backend_stall_timeout(settings, execution_route.backend),
             completion: nil,
             mcp: nil,
             ssh_tunnel: nil,
@@ -1483,18 +1590,19 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: issue.identifier,
           issue_url: issue.url,
           error: "failed to spawn agent: #{inspect(reason)}",
-          backend: settings.agent.backend,
+          backend: execution_route.backend,
           worker_host: worker_host,
+          execution_route: execution_route,
           settings_snapshot: settings,
           tracker_binding: dispatch_context.tracker_binding
         })
     end
   end
 
-  defp backend_stall_timeout(%{agent: %{backend: "claude"}, claude: claude}),
+  defp backend_stall_timeout(%{claude: claude}, "claude"),
     do: claude.stall_timeout_ms
 
-  defp backend_stall_timeout(%{codex: codex}), do: codex.stall_timeout_ms
+  defp backend_stall_timeout(%{codex: codex}, _backend), do: codex.stall_timeout_ms
 
   defp revalidate_issue_for_dispatch(%Issue{id: issue_id}, issue_fetcher, tracker_settings)
        when is_binary(issue_id) and is_function(issue_fetcher, 1) do
@@ -1538,6 +1646,7 @@ defmodule SymphonyElixir.Orchestrator do
     backend = pick_retry_backend(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
+    execution_route = metadata[:execution_route] || Map.get(previous_retry, :execution_route)
     settings_snapshot = metadata[:settings_snapshot] || Map.get(previous_retry, :settings_snapshot)
     tracker_binding = metadata[:tracker_binding] || Map.get(previous_retry, :tracker_binding)
 
@@ -1565,6 +1674,7 @@ defmodule SymphonyElixir.Orchestrator do
             backend: backend,
             worker_host: worker_host,
             workspace_path: workspace_path,
+            execution_route: execution_route,
             settings_snapshot: settings_snapshot,
             tracker_binding: tracker_binding
           })
@@ -1581,6 +1691,7 @@ defmodule SymphonyElixir.Orchestrator do
           backend: Map.get(retry_entry, :backend),
           worker_host: Map.get(retry_entry, :worker_host),
           workspace_path: Map.get(retry_entry, :workspace_path),
+          execution_route: Map.get(retry_entry, :execution_route),
           settings_snapshot: Map.get(retry_entry, :settings_snapshot),
           tracker_binding: Map.get(retry_entry, :tracker_binding)
         }
@@ -1688,18 +1799,26 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_active_retry(state, issue, attempt, metadata, dispatch_context) do
+    execution_route = Map.get(metadata, :execution_route)
+
     if retry_candidate_issue?(issue, dispatch_context.settings.tracker) and
          dispatch_slots_available?(issue, state, dispatch_context.settings) and
-         worker_slots_available?(state, metadata[:worker_host], dispatch_context.settings) do
-      case refresh_issue_for_dispatch(issue, dispatch_context) do
-        {:ok, %Issue{} = refreshed_issue} ->
+         retry_worker_slots_available?(
+           state,
+           metadata[:worker_host],
+           dispatch_context.settings,
+           execution_route
+         ) do
+      case refresh_issue_for_dispatch(issue, dispatch_context, execution_route) do
+        {:ok, %Issue{} = refreshed_issue, %ExecutionRoute{} = resolved_route} ->
           {:noreply,
            do_dispatch_issue(
              state,
              refreshed_issue,
              attempt,
              metadata[:worker_host],
-             dispatch_context
+             dispatch_context,
+             resolved_route
            )}
 
         {:skip, :missing} ->
@@ -1707,6 +1826,19 @@ defmodule SymphonyElixir.Orchestrator do
 
         {:skip, %Issue{} = refreshed_issue} ->
           handle_retry_issue_lookup(refreshed_issue, state, issue.id, attempt, metadata)
+
+        {:error, reason, resolved_route} ->
+          {:noreply,
+           schedule_issue_retry(
+             state,
+             issue.id,
+             attempt + 1,
+             Map.merge(metadata, %{
+               identifier: issue.identifier,
+               error: "retry dispatch refresh failed: #{inspect(reason)}",
+               execution_route: resolved_route
+             })
+           )}
 
         {:error, reason} ->
           {:noreply,
@@ -1775,6 +1907,7 @@ defmodule SymphonyElixir.Orchestrator do
         backend: Map.get(running_entry, :backend),
         worker_host: Map.get(running_entry, :worker_host),
         workspace_path: Map.get(running_entry, :workspace_path),
+        execution_route: Map.get(running_entry, :execution_route),
         settings_snapshot: Map.get(running_entry, :settings_snapshot),
         tracker_binding: Map.get(running_entry, :tracker_binding)
       },
@@ -1822,8 +1955,8 @@ defmodule SymphonyElixir.Orchestrator do
     Map.put(running_entry, key, value)
   end
 
-  defp select_worker_host(%State{} = state, preferred_worker_host, settings) do
-    case settings.worker.ssh_hosts do
+  defp select_worker_host(%State{} = state, preferred_worker_host, settings, worker_hosts) do
+    case worker_hosts do
       [] ->
         nil
 
@@ -1867,8 +2000,33 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp worker_slots_available?(%State{} = state, preferred_worker_host, settings) do
-    select_worker_host(state, preferred_worker_host, settings) != :no_worker_capacity
+    select_worker_host(state, preferred_worker_host, settings, settings.worker.ssh_hosts) !=
+      :no_worker_capacity
   end
+
+  defp candidate_worker_slots_available?(%State{} = state, settings) do
+    ExecutionRoute.enabled?(settings) or worker_slots_available?(state, nil, settings)
+  end
+
+  defp retry_worker_slots_available?(
+         %State{} = state,
+         preferred_worker_host,
+         settings,
+         %ExecutionRoute{worker_hosts: worker_hosts}
+       ) do
+    select_worker_host(state, preferred_worker_host, settings, worker_hosts) != :no_worker_capacity
+  end
+
+  defp retry_worker_slots_available?(state, preferred_worker_host, settings, _execution_route),
+    do:
+      ExecutionRoute.enabled?(settings) or
+        worker_slots_available?(state, preferred_worker_host, settings)
+
+  defp route_backend(%ExecutionRoute{backend: backend}, _settings), do: backend
+  defp route_backend(_execution_route, settings), do: settings.agent.backend
+
+  defp route_value(%ExecutionRoute{} = route, key), do: Map.get(route, key)
+  defp route_value(_execution_route, _key), do: nil
 
   defp worker_host_slots_available?(%State{} = state, worker_host, settings) when is_binary(worker_host) do
     case settings.worker.max_concurrent_agents_per_host do
@@ -1962,6 +2120,9 @@ defmodule SymphonyElixir.Orchestrator do
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
           backend: Map.get(metadata, :backend),
+          profile: Map.get(metadata, :profile),
+          ready_actor: Map.get(metadata, :ready_actor),
+          eligible_worker_hosts: route_value(Map.get(metadata, :execution_route), :worker_hosts),
           session_id: metadata.session_id,
           turn_id: Map.get(metadata, :turn_id),
           agent_process_pid: Map.get(metadata, :agent_process_pid),
@@ -1998,6 +2159,9 @@ defmodule SymphonyElixir.Orchestrator do
           issue_url: Map.get(retry, :issue_url),
           error: Map.get(retry, :error),
           backend: Map.get(retry, :backend),
+          profile: route_value(Map.get(retry, :execution_route), :profile),
+          ready_actor: route_value(Map.get(retry, :execution_route), :ready_actor),
+          eligible_worker_hosts: route_value(Map.get(retry, :execution_route), :worker_hosts),
           worker_host: Map.get(retry, :worker_host),
           workspace_path: Map.get(retry, :workspace_path)
         }
@@ -2014,6 +2178,9 @@ defmodule SymphonyElixir.Orchestrator do
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
           backend: Map.get(metadata, :backend),
+          profile: Map.get(metadata, :profile),
+          ready_actor: Map.get(metadata, :ready_actor),
+          eligible_worker_hosts: route_value(Map.get(metadata, :execution_route), :worker_hosts),
           session_id: Map.get(metadata, :session_id),
           mcp: Map.get(metadata, :mcp),
           ssh_tunnel: Map.get(metadata, :ssh_tunnel),

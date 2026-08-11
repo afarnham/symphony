@@ -148,6 +148,154 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  defmodule AgentRouting do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    @backends ["codex", "claude"]
+
+    embedded_schema do
+      field(:ready_state, :string)
+      field(:executor_field, :string)
+      field(:profiles, :map)
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, [:ready_state, :executor_field, :profiles], empty_values: [])
+      |> validate_required([:ready_state, :executor_field, :profiles])
+      |> validate_change(:ready_state, &validate_present_string/2)
+      |> validate_change(:executor_field, &validate_present_string/2)
+      |> validate_change(:profiles, &validate_profiles/2)
+      |> update_change(:ready_state, &String.trim/1)
+      |> update_change(:executor_field, &String.trim/1)
+      |> update_change(:profiles, &normalize_profiles/1)
+    end
+
+    defp validate_present_string(field, value) do
+      if is_binary(value) and String.trim(value) != "",
+        do: [],
+        else: [{field, "can't be blank"}]
+    end
+
+    defp validate_profiles(:profiles, profiles) when is_map(profiles) and map_size(profiles) > 0 do
+      profile_errors =
+        Enum.flat_map(profiles, fn {login, profile} ->
+          validate_profile(login, profile)
+        end)
+
+      login_errors = validate_unique_profile_logins(profiles)
+      host_errors = validate_unique_profile_hosts(profiles)
+
+      if profile_errors == [] and login_errors == [] and host_errors == [],
+        do: [],
+        else: [profiles: Enum.join(profile_errors ++ login_errors ++ host_errors, "; ")]
+    end
+
+    defp validate_profiles(:profiles, _profiles), do: [profiles: "must contain at least one profile"]
+
+    defp validate_profile(login, profile) when is_map(profile) do
+      normalized_login = login |> to_string() |> String.trim() |> String.downcase()
+      backend = Map.get(profile, "default_backend") || Map.get(profile, :default_backend)
+      hosts = Map.get(profile, "worker_hosts") || Map.get(profile, :worker_hosts)
+
+      []
+      |> maybe_add_error(
+        normalized_login == "" or not String.match?(normalized_login, ~r/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/),
+        "profile #{inspect(login)} must be a GitHub login"
+      )
+      |> maybe_add_error(
+        backend not in @backends,
+        "profile #{inspect(login)} default_backend must be codex or claude"
+      )
+      |> maybe_add_error(
+        not valid_worker_hosts?(hosts),
+        "profile #{inspect(login)} worker_hosts must contain non-empty unique strings"
+      )
+    end
+
+    defp validate_profile(login, _profile),
+      do: ["profile #{inspect(login)} must be a map"]
+
+    defp valid_worker_hosts?(hosts) when is_list(hosts) and hosts != [] do
+      normalized = Enum.map(hosts, &normalize_host/1)
+      Enum.all?(normalized, &(&1 != "")) and Enum.uniq(normalized) == normalized
+    end
+
+    defp valid_worker_hosts?(_hosts), do: false
+
+    defp validate_unique_profile_logins(profiles) do
+      duplicates =
+        profiles
+        |> Map.keys()
+        |> Enum.map(&(to_string(&1) |> String.trim() |> String.downcase()))
+        |> Enum.frequencies()
+        |> Enum.filter(fn {_login, count} -> count > 1 end)
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.sort()
+
+      case duplicates do
+        [] -> []
+        logins -> ["profile logins must be unique after normalization: #{Enum.join(logins, ", ")}"]
+      end
+    end
+
+    defp validate_unique_profile_hosts(profiles) do
+      duplicates =
+        profiles
+        |> Enum.flat_map(fn {_login, profile} ->
+          profile_worker_hosts(profile)
+        end)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.frequencies()
+        |> Enum.filter(fn {_host, count} -> count > 1 end)
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.sort()
+
+      case duplicates do
+        [] -> []
+        hosts -> ["worker hosts may belong to only one profile: #{Enum.join(hosts, ", ")}"]
+      end
+    end
+
+    defp profile_worker_hosts(profile) when is_map(profile) do
+      case Map.get(profile, "worker_hosts") || Map.get(profile, :worker_hosts) do
+        hosts when is_list(hosts) -> Enum.map(hosts, &normalize_host/1)
+        _hosts -> []
+      end
+    end
+
+    defp profile_worker_hosts(_profile), do: []
+
+    defp normalize_profiles(profiles) do
+      Map.new(profiles, fn {login, profile} ->
+        normalized_login = login |> to_string() |> String.trim() |> String.downcase()
+        {normalized_login, normalize_profile(profile)}
+      end)
+    end
+
+    defp normalize_profile(profile) when is_map(profile) do
+      backend = Map.get(profile, "default_backend") || Map.get(profile, :default_backend)
+      hosts = Map.get(profile, "worker_hosts") || Map.get(profile, :worker_hosts)
+
+      %{
+        "default_backend" => backend,
+        "worker_hosts" => if(is_list(hosts), do: Enum.map(hosts, &normalize_host/1), else: [])
+      }
+    end
+
+    defp normalize_profile(_profile), do: %{}
+
+    defp normalize_host(host) when is_binary(host), do: String.trim(host)
+    defp normalize_host(_host), do: ""
+
+    defp maybe_add_error(errors, true, error), do: errors ++ [error]
+    defp maybe_add_error(errors, false, _error), do: errors
+  end
+
   defmodule Agent do
     @moduledoc false
     use Ecto.Schema
@@ -163,6 +311,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
       field(:max_concurrent_agents_by_state, :map, default: %{})
+      embeds_one(:routing, AgentRouting, on_replace: :update)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -186,6 +335,7 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
       |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
+      |> cast_embed(:routing, with: &AgentRouting.changeset/2)
     end
   end
 

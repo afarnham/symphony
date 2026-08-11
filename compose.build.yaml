@@ -6,7 +6,17 @@ services:
       context: .
       dockerfile: Dockerfile
 
-  agent-worker:
+  agent-worker-afarnham:
+    image: symphony-agent-worker:local
+    pull_policy: build
+    build:
+      context: ./docker/worker
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.226}
+        CODEX_VERSION: ${CODEX_VERSION:-0.147.0}
+        PNPM_VERSION: ${PNPM_VERSION:-11.21.0}
+
+  agent-worker-karbas:
     image: symphony-agent-worker:local
     pull_policy: build
     build:

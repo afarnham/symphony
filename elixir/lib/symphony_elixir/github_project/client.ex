@@ -18,6 +18,32 @@ defmodule SymphonyElixir.GitHubProject.Client do
   @page_size 100
   @user_agent "symphony"
   @max_error_body_chars 4_096
+  @routing_event_page_size 100
+  @routing_event_max_pages 10
+  @routing_event_query """
+  query SymphonyReadyActor($issueId: ID!, $before: String, $pageSize: Int!) {
+    node(id: $issueId) {
+      ... on Issue {
+        timelineItems(
+          last: $pageSize
+          before: $before
+          itemTypes: [PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]
+        ) {
+          nodes {
+            ... on ProjectV2ItemStatusChangedEvent {
+              actor { login }
+              createdAt
+              status
+              wasAutomated
+              project { id number }
+            }
+          }
+          pageInfo { hasPreviousPage startCursor }
+        }
+      }
+    }
+  }
+  """
 
   @type snapshot :: %{
           required(:api_url) => String.t(),
@@ -25,9 +51,12 @@ defmodule SymphonyElixir.GitHubProject.Client do
           required(:owner) => String.t(),
           required(:owner_type) => :organization | :user,
           required(:project_id) => pos_integer(),
+          optional(:project_node_id) => String.t() | nil,
           required(:project_number) => pos_integer(),
           required(:repository) => String.t(),
           required(:status) => Normalizer.status_snapshot(),
+          optional(:executor) => Normalizer.executor_snapshot() | nil,
+          optional(:routing_ready_state) => String.t() | nil,
           required(:active_states) => MapSet.t(String.t()),
           required(:terminal_states) => MapSet.t(String.t()),
           required(:working_state) => String.t(),
@@ -58,6 +87,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
          {:ok, project} <-
            request_body("GET", project_path(settings), %{}, nil, settings, request_fun),
          {:ok, project_id} <- project_id(project, settings.project_number),
+         {:ok, project_node_id} <- project_node_id(project, settings),
          {:ok, repository} <-
            request_body("GET", repository_path(settings), %{}, nil, settings, request_fun),
          :ok <- validate_repository_payload(repository, settings.repository),
@@ -67,11 +97,17 @@ defmodule SymphonyElixir.GitHubProject.Client do
              fields,
              settings.status_field,
              settings.required_states
-           ) do
+           ),
+         {:ok, executor} <- resolve_executor_field(fields, settings.executor_field) do
       snapshot =
         settings
         |> Map.drop([:required_states, :status_field])
-        |> Map.merge(%{project_id: project_id, status: status})
+        |> Map.merge(%{
+          project_id: project_id,
+          project_node_id: project_node_id,
+          status: status,
+          executor: executor
+        })
 
       with :ok <- preflight_project_items(snapshot, request_fun) do
         {:ok, snapshot}
@@ -119,7 +155,13 @@ defmodule SymphonyElixir.GitHubProject.Client do
 
     with {:ok, item_ids} <- parse_item_ids(ids),
          {:ok, snapshot} <- resolve_snapshot(tracker_settings, opts) do
-      fetch_item_ids(item_ids, snapshot, request_fun, [])
+      fetch_item_ids(
+        item_ids,
+        snapshot,
+        request_fun,
+        Keyword.get(opts, :include_routing, false),
+        []
+      )
     end
   end
 
@@ -199,6 +241,8 @@ defmodule SymphonyElixir.GitHubProject.Client do
     project_number = provider["project_number"]
     repository = normalize_string(provider["repository"])
     status_field = normalize_string(provider["status_field"] || "Status")
+    executor_field = normalize_optional(provider["executor_field"])
+    routing_ready_state = normalize_optional(provider["routing_ready_state"])
     token = resolve_token(provider["token"])
 
     with :ok <- validate_api_url(api_url),
@@ -207,6 +251,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
          :ok <- validate_project_number(project_number),
          :ok <- validate_repository(repository),
          :ok <- validate_status_field(status_field),
+         :ok <- validate_routing_fields(executor_field, routing_ready_state),
          :ok <- validate_token(token),
          {:ok, active_states} <- state_list(Map.get(tracker_settings, :active_states), :active),
          {:ok, terminal_states} <- state_list(Map.get(tracker_settings, :terminal_states), :terminal),
@@ -235,6 +280,8 @@ defmodule SymphonyElixir.GitHubProject.Client do
          project_number: project_number,
          repository: repository,
          status_field: status_field,
+         executor_field: executor_field,
+         routing_ready_state: routing_ready_state,
          active_states: MapSet.new(active_states, &normalize_state/1),
          terminal_states: MapSet.new(terminal_states, &normalize_state/1),
          working_state: working_state,
@@ -290,6 +337,22 @@ defmodule SymphonyElixir.GitHubProject.Client do
       do: :ok,
       else: {:error, :missing_github_project_status_field}
   end
+
+  defp validate_routing_fields(nil, nil), do: :ok
+
+  defp validate_routing_fields(executor_field, ready_state)
+       when is_binary(executor_field) and executor_field != "" and is_binary(ready_state) and
+              ready_state != "",
+       do: :ok
+
+  defp validate_routing_fields(nil, _ready_state),
+    do: {:error, :missing_github_project_executor_field}
+
+  defp validate_routing_fields(_executor_field, nil),
+    do: {:error, :missing_github_project_routing_ready_state}
+
+  defp validate_routing_fields(_executor_field, _ready_state),
+    do: {:error, :invalid_github_project_routing_fields}
 
   defp validate_token(value) do
     if present_string?(value), do: :ok, else: {:error, :missing_github_project_token}
@@ -380,6 +443,21 @@ defmodule SymphonyElixir.GitHubProject.Client do
   defp project_id(_project, _project_number),
     do: {:error, :github_project_project_payload_malformed}
 
+  defp project_node_id(project, %{routing_ready_state: nil}) when is_map(project),
+    do: {:ok, normalize_optional(project["node_id"])}
+
+  defp project_node_id(%{"node_id" => node_id}, %{routing_ready_state: ready_state})
+       when is_binary(node_id) and node_id != "" and is_binary(ready_state),
+       do: {:ok, node_id}
+
+  defp project_node_id(_project, _settings),
+    do: {:error, :github_project_project_node_id_missing}
+
+  defp resolve_executor_field(_fields, nil), do: {:ok, nil}
+
+  defp resolve_executor_field(fields, executor_field),
+    do: Normalizer.resolve_executor_field(fields, executor_field)
+
   defp validate_repository_payload(%{"full_name" => full_name}, configured_repository)
        when is_binary(full_name) do
     if normalize_state(full_name) == normalize_state(configured_repository),
@@ -412,7 +490,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
 
     fetch_pages(
       path,
-      %{"fields" => Integer.to_string(snapshot.status.field_id), "per_page" => @page_size},
+      %{"fields" => requested_field_ids(snapshot), "per_page" => @page_size},
       snapshot,
       request_fun,
       []
@@ -421,7 +499,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
 
   defp preflight_project_items(snapshot, request_fun) do
     params = %{
-      "fields" => Integer.to_string(snapshot.status.field_id),
+      "fields" => requested_field_ids(snapshot),
       "per_page" => 1
     }
 
@@ -447,7 +525,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
            request_body(
              "GET",
              item_path(snapshot, item_id),
-             %{"fields" => Integer.to_string(snapshot.status.field_id)},
+             %{"fields" => requested_field_ids(snapshot)},
              nil,
              snapshot,
              request_fun
@@ -558,23 +636,180 @@ defmodule SymphonyElixir.GitHubProject.Client do
     end
   end
 
-  defp fetch_item_ids([], _snapshot, _request_fun, issues), do: {:ok, Enum.reverse(issues)}
+  defp fetch_item_ids([], _snapshot, _request_fun, _include_routing, issues),
+    do: {:ok, Enum.reverse(issues)}
 
-  defp fetch_item_ids([item_id | rest], snapshot, request_fun, issues) do
+  defp fetch_item_ids([item_id | rest], snapshot, request_fun, include_routing, issues) do
     case fetch_item(item_id, snapshot, request_fun, true) do
       {:ok, :not_found} ->
-        fetch_item_ids(rest, snapshot, request_fun, issues)
+        fetch_item_ids(rest, snapshot, request_fun, include_routing, issues)
 
       {:ok, item} ->
-        case normalize_items([item], snapshot, request_fun, :refresh) do
-          {:ok, [issue]} -> fetch_item_ids(rest, snapshot, request_fun, [issue | issues])
-          {:ok, []} -> fetch_item_ids(rest, snapshot, request_fun, issues)
-          {:error, reason} -> {:error, reason}
-        end
+        item
+        |> then(&normalize_items([&1], snapshot, request_fun, :refresh))
+        |> continue_fetched_item_ids(rest, snapshot, request_fun, include_routing, issues)
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp continue_fetched_item_ids(
+         {:ok, [issue]},
+         rest,
+         snapshot,
+         request_fun,
+         include_routing,
+         issues
+       ) do
+    with {:ok, routed_issue} <-
+           maybe_attach_ready_actor(issue, snapshot, request_fun, include_routing) do
+      fetch_item_ids(rest, snapshot, request_fun, include_routing, [routed_issue | issues])
+    end
+  end
+
+  defp continue_fetched_item_ids(
+         {:ok, []},
+         rest,
+         snapshot,
+         request_fun,
+         include_routing,
+         issues
+       ),
+       do: fetch_item_ids(rest, snapshot, request_fun, include_routing, issues)
+
+  defp continue_fetched_item_ids(
+         {:error, reason},
+         _rest,
+         _snapshot,
+         _request_fun,
+         _include_routing,
+         _issues
+       ),
+       do: {:error, reason}
+
+  defp maybe_attach_ready_actor(issue, _snapshot, _request_fun, false), do: {:ok, issue}
+
+  defp maybe_attach_ready_actor(issue, %{routing_ready_state: nil}, _request_fun, true),
+    do: {:ok, issue}
+
+  defp maybe_attach_ready_actor(%Issue{} = issue, snapshot, request_fun, true) do
+    with %{"issue_node_id" => issue_node_id} when is_binary(issue_node_id) <- issue.native_ref,
+         {:ok, event} <- fetch_ready_actor(issue_node_id, snapshot, request_fun, nil, 0) do
+      {:ok,
+       %{
+         issue
+         | ready_actor_id: event.actor,
+           ready_actor_automated: event.automated
+       }}
+    else
+      {:error, _reason} = error -> error
+      _missing -> {:error, :github_project_issue_node_id_missing}
+    end
+  end
+
+  defp fetch_ready_actor(_issue_node_id, _snapshot, _request_fun, _before, page)
+       when page >= @routing_event_max_pages,
+       do: {:error, :github_project_ready_transition_history_limit}
+
+  defp fetch_ready_actor(issue_node_id, snapshot, request_fun, before, page) do
+    body = %{
+      "query" => @routing_event_query,
+      "variables" => %{
+        "issueId" => issue_node_id,
+        "before" => before,
+        "pageSize" => @routing_event_page_size
+      }
+    }
+
+    with {:ok, payload} <-
+           request_body("POST", "/graphql", %{}, body, snapshot, request_fun),
+         {:ok, timeline} <- routing_timeline(payload) do
+      case matching_ready_event(timeline["nodes"], snapshot) do
+        {:ok, event} ->
+          {:ok, event}
+
+        :not_found ->
+          fetch_previous_routing_page(
+            timeline["pageInfo"],
+            issue_node_id,
+            snapshot,
+            request_fun,
+            page
+          )
+      end
+    end
+  end
+
+  defp routing_timeline(%{"errors" => [_first | _rest] = errors}),
+    do: {:error, {:github_project_routing_graphql_error, bounded_graphql_errors(errors)}}
+
+  defp routing_timeline(%{
+         "data" => %{
+           "node" => %{
+             "timelineItems" => %{"nodes" => nodes, "pageInfo" => page_info} = timeline
+           }
+         }
+       })
+       when is_list(nodes) and is_map(page_info),
+       do: {:ok, timeline}
+
+  defp routing_timeline(_payload), do: {:error, :github_project_routing_payload_malformed}
+
+  defp matching_ready_event(nodes, snapshot) when is_list(nodes) do
+    nodes
+    |> Enum.reverse()
+    |> Enum.find_value(:not_found, fn
+      %{
+        "actor" => %{"login" => actor},
+        "status" => status,
+        "wasAutomated" => automated,
+        "project" => %{"id" => project_node_id}
+      }
+      when is_binary(actor) and is_binary(status) and is_boolean(automated) ->
+        if project_node_id == snapshot.project_node_id and
+             normalize_state(status) == normalize_state(snapshot.routing_ready_state) do
+          {:ok, %{actor: actor, automated: automated}}
+        end
+
+      _event ->
+        nil
+    end)
+  end
+
+  defp fetch_previous_routing_page(
+         %{"hasPreviousPage" => true, "startCursor" => cursor},
+         issue_node_id,
+         snapshot,
+         request_fun,
+         page
+       )
+       when is_binary(cursor) and cursor != "" do
+    fetch_ready_actor(issue_node_id, snapshot, request_fun, cursor, page + 1)
+  end
+
+  defp fetch_previous_routing_page(
+         %{"hasPreviousPage" => false},
+         _issue_node_id,
+         _snapshot,
+         _request_fun,
+         _page
+       ),
+       do: {:error, :github_project_ready_transition_not_found}
+
+  defp fetch_previous_routing_page(
+         _page_info,
+         _issue_node_id,
+         _snapshot,
+         _request_fun,
+         _page
+       ),
+       do: {:error, :github_project_routing_payload_malformed}
+
+  defp bounded_graphql_errors(errors) do
+    errors
+    |> inspect(limit: 10, printable_limit: @max_error_body_chars)
+    |> String.slice(0, @max_error_body_chars)
   end
 
   defp fetch_one_issue(item_id, snapshot, request_fun) do
@@ -592,7 +827,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
            request_body(
              "GET",
              item_path(snapshot, item_id),
-             %{"fields" => Integer.to_string(snapshot.status.field_id)},
+             %{"fields" => requested_field_ids(snapshot)},
              nil,
              snapshot,
              request_fun,
@@ -884,6 +1119,14 @@ defmodule SymphonyElixir.GitHubProject.Client do
   end
 
   defp present_header?(headers, name), do: Map.get(headers, name, []) != []
+
+  defp requested_field_ids(%{status: status, executor: executor}) do
+    [status.field_id, executor && executor.field_id]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map_join(",", &Integer.to_string/1)
+  end
+
+  defp requested_field_ids(%{status: status}), do: Integer.to_string(status.field_id)
 
   defp project_path(settings), do: owner_project_path(settings)
   defp fields_path(settings), do: owner_project_path(settings) <> "/fields"

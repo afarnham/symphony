@@ -4,7 +4,18 @@ defmodule SymphonyElixir.AgentRunner do
   """
 
   require Logger
-  alias SymphonyElixir.{AgentBackend, AgentEvent, AgentTurnResult, Config, PromptBuilder, Tracker, Workspace}
+
+  alias SymphonyElixir.{
+    AgentBackend,
+    AgentEvent,
+    AgentTurnResult,
+    Config,
+    ExecutionRoute,
+    PromptBuilder,
+    Tracker,
+    Workspace
+  }
+
   alias SymphonyElixir.Tracker.Issue
 
   @type worker_host :: String.t() | nil
@@ -49,13 +60,17 @@ defmodule SymphonyElixir.AgentRunner do
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
   def run(issue, agent_update_recipient \\ nil, opts \\ []) do
     settings = Keyword.get_lazy(opts, :settings_snapshot, &Config.settings!/0)
-    # The orchestrator owns host retries so one worker lifetime never hops machines.
-    worker_host = selected_worker_host(Keyword.get(opts, :worker_host), settings.worker.ssh_hosts)
-
-    Logger.info("Starting agent run for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
+    execution_route = Keyword.get(opts, :execution_route)
 
     result =
-      with {:ok, backend} <- selected_backend(settings, opts),
+      with {:ok, worker_host} <-
+             selected_worker_host(
+               Keyword.get(opts, :worker_host),
+               settings.worker.ssh_hosts,
+               execution_route
+             ),
+           :ok <- log_agent_start(issue, worker_host, execution_route),
+           {:ok, backend} <- selected_backend(settings, opts),
            :ok <- backend.validate_config(settings),
            :ok <- backend.validate_host(settings, worker_host) do
         run_on_worker_host(
@@ -78,6 +93,10 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
+  defp log_agent_start(issue, worker_host, execution_route) do
+    Logger.info("Starting agent run for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)} profile=#{route_profile_for_log(execution_route)}")
+  end
+
   defp run_on_worker_host(issue, agent_update_recipient, opts, worker_host, backend, settings) do
     Logger.info("Starting worker attempt for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
 
@@ -88,7 +107,8 @@ defmodule SymphonyElixir.AgentRunner do
           issue,
           worker_host,
           workspace,
-          backend.name()
+          backend.name(),
+          Keyword.get(opts, :execution_route)
         )
 
         try do
@@ -126,7 +146,14 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp send_agent_update(_recipient, _issue, _event), do: :ok
 
-  defp send_worker_runtime_info(recipient, %Issue{id: issue_id}, worker_host, workspace, backend)
+  defp send_worker_runtime_info(
+         recipient,
+         %Issue{id: issue_id},
+         worker_host,
+         workspace,
+         backend,
+         execution_route
+       )
        when is_binary(issue_id) and is_pid(recipient) and is_binary(workspace) do
     send(
       recipient,
@@ -134,14 +161,24 @@ defmodule SymphonyElixir.AgentRunner do
        %{
          worker_host: worker_host,
          workspace_path: workspace,
-         backend: backend
+         backend: backend,
+         profile: route_value(execution_route, :profile),
+         ready_actor: route_value(execution_route, :ready_actor)
        }}
     )
 
     :ok
   end
 
-  defp send_worker_runtime_info(_recipient, _issue, _worker_host, _workspace, _backend), do: :ok
+  defp send_worker_runtime_info(
+         _recipient,
+         _issue,
+         _worker_host,
+         _workspace,
+         _backend,
+         _execution_route
+       ),
+       do: :ok
 
   defp run_agent_turns(workspace, issue, agent_update_recipient, opts, worker_host, backend, settings) do
     max_turns = Keyword.get(opts, :max_turns, settings.agent.max_turns)
@@ -395,24 +432,49 @@ defmodule SymphonyElixir.AgentRunner do
     Issue.routable?(issue, tracker_settings.required_labels)
   end
 
-  defp selected_worker_host(nil, []), do: nil
-
-  defp selected_worker_host(preferred_host, configured_hosts) when is_list(configured_hosts) do
+  defp selected_worker_host(preferred_host, configured_hosts, execution_route)
+       when is_list(configured_hosts) do
     hosts =
-      configured_hosts
+      execution_worker_hosts(configured_hosts, execution_route)
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
       |> Enum.uniq()
 
     case preferred_host do
-      host when is_binary(host) and host != "" -> host
-      _ when hosts == [] -> nil
-      _ -> List.first(hosts)
+      host when is_binary(host) and host != "" ->
+        validate_preferred_worker_host(host, hosts, execution_route)
+
+      _ when hosts == [] ->
+        {:ok, nil}
+
+      _ ->
+        {:ok, List.first(hosts)}
     end
   end
 
+  defp execution_worker_hosts(_configured_hosts, %ExecutionRoute{worker_hosts: worker_hosts}),
+    do: worker_hosts
+
+  defp execution_worker_hosts(configured_hosts, _execution_route), do: configured_hosts
+
+  defp validate_preferred_worker_host(host, hosts, %ExecutionRoute{}) do
+    if host in hosts do
+      {:ok, host}
+    else
+      {:error, {:worker_host_outside_execution_profile, host}}
+    end
+  end
+
+  defp validate_preferred_worker_host(host, _hosts, _execution_route), do: {:ok, host}
+
   defp worker_host_for_log(nil), do: "local"
   defp worker_host_for_log(worker_host), do: worker_host
+
+  defp route_profile_for_log(%ExecutionRoute{profile: profile}) when is_binary(profile), do: profile
+  defp route_profile_for_log(_execution_route), do: "default"
+
+  defp route_value(%ExecutionRoute{} = route, key), do: Map.get(route, key)
+  defp route_value(_execution_route, _key), do: nil
 
   defp normalize_issue_state(state_name) when is_binary(state_name) do
     state_name
@@ -421,9 +483,10 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp selected_backend(settings, opts) do
-    case Keyword.get(opts, :backend_module) do
-      backend when is_atom(backend) and not is_nil(backend) -> {:ok, backend}
-      _ -> AgentBackend.resolve(settings)
+    case {Keyword.get(opts, :backend_module), Keyword.get(opts, :execution_route)} do
+      {backend, _route} when is_atom(backend) and not is_nil(backend) -> {:ok, backend}
+      {_backend, %ExecutionRoute{backend: backend_name}} -> AgentBackend.resolve(backend_name)
+      _other -> AgentBackend.resolve(settings)
     end
   end
 

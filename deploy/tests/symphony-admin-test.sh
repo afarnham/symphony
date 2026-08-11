@@ -62,12 +62,14 @@ assert_file_line() {
   [[ "$actual" == "$expected" ]] || fail "$path did not contain the expected value"
 }
 
-printf '1..14\n'
+printf '1..15\n'
 
 admin secrets init >/dev/null
 [[ "$(mode_of "$SECRETS_ROOT")" == "700" ]] || fail "secrets directory mode"
 for name in \
-  github_project_token github_worker_token claude_oauth_token openai_api_key \
+  github_project_token github_worker_token \
+  afarnham_claude_oauth_token afarnham_openai_api_key \
+  karbas_claude_oauth_token karbas_openai_api_key \
   worker_ssh_private_key worker_ssh_authorized_key \
   worker_ssh_host_private_key worker_ssh_host_public_key; do
   [[ "$(mode_of "$SECRETS_ROOT/$name")" == "400" ]] || fail "$name mode"
@@ -124,8 +126,14 @@ pass "invalid and injected secret names are rejected"
 
 list_output=$(admin secrets list)
 [[ "$list_output" != *'github-secret-value-2'* ]] || fail "list disclosed token"
-[[ "$list_output" == *'claude_oauth_token'*'unset'* ]] || fail "list did not report optional unset secret"
+[[ "$list_output" == *'afarnham_claude_oauth_token'*'unset'* ]] ||
+  fail "list did not report optional profile secret"
 pass "list reports state without revealing values"
+
+workers_output=$(admin workers list)
+[[ "$workers_output" == *'afarnham'*'agent-worker-afarnham'* ]] || fail "afarnham worker missing"
+[[ "$workers_output" == *'karbas'*'agent-worker-karbas'* ]] || fail "karbas worker missing"
+pass "workers list exposes the configured profile-to-service mapping"
 
 set_secret github_worker_token 'worker-secret-value' >/dev/null
 admin secrets verify >/dev/null || fail "verify rejected valid required secrets"
@@ -153,8 +161,8 @@ apply_fake_docker
 FAKE_DOCKER_LOG="$TEST_ROOT/docker.log" \
   PATH="$TEST_ROOT/fake-bin:$PATH" \
   SYMPHONY_SECRETS_DIR="$SECRETS_ROOT" \
-  "$ADMIN" auth codex >/dev/null
-expected_args=$'<call>\ncompose\n--project-name\nsymphony\n--file\n/opt/symphony/compose.yaml\nrun\n--rm\n--no-deps\nvolume-init\n<call>\ncompose\n--project-name\nsymphony\n--file\n/opt/symphony/compose.yaml\nrun\n--rm\n--no-deps\nagent-worker\ncodex\nlogin\n--device-auth'
+  "$ADMIN" workers auth afarnham codex >/dev/null
+expected_args=$'<call>\ncompose\n--project-name\nsymphony\n--file\n/opt/symphony/compose.yaml\nrun\n--rm\n--no-deps\nvolume-init\n<call>\ncompose\n--project-name\nsymphony\n--file\n/opt/symphony/compose.yaml\nrun\n--rm\n--no-deps\nagent-worker-afarnham\ncodex\nlogin\n--device-auth'
 actual_args=$(<"$TEST_ROOT/docker.log")
 [[ "$actual_args" == "$expected_args" ]] || fail "Codex auth compose arguments were incorrect"
 pass "Codex auth uses a disposable worker container"
@@ -166,8 +174,8 @@ FAKE_DOCKER_LOG="$TEST_ROOT/docker.log" \
   PATH="$TEST_ROOT/fake-bin:$PATH" \
   SYMPHONY_SECRETS_DIR="$SECRETS_ROOT" \
   SYMPHONY_ENV_FILE="$deployment_env" \
-  "$ADMIN" auth claude >/dev/null
-expected_args=$'<call>\ncompose\n--env-file\n'"$deployment_env"$'\n--project-name\nsymphony\n--file\n/opt/symphony/compose.yaml\nrun\n--rm\n--no-deps\nvolume-init\n<call>\ncompose\n--env-file\n'"$deployment_env"$'\n--project-name\nsymphony\n--file\n/opt/symphony/compose.yaml\nrun\n--rm\n--no-deps\nagent-worker\nclaude\nauth\nlogin'
+  "$ADMIN" workers auth karbas claude >/dev/null
+expected_args=$'<call>\ncompose\n--env-file\n'"$deployment_env"$'\n--project-name\nsymphony\n--file\n/opt/symphony/compose.yaml\nrun\n--rm\n--no-deps\nvolume-init\n<call>\ncompose\n--env-file\n'"$deployment_env"$'\n--project-name\nsymphony\n--file\n/opt/symphony/compose.yaml\nrun\n--rm\n--no-deps\nagent-worker-karbas\nclaude\nauth\nlogin'
 actual_args=$(<"$TEST_ROOT/docker.log")
 [[ "$actual_args" == "$expected_args" ]] || fail "deployment env file was not forwarded"
 pass "auth loads the protected deployment environment file"
@@ -175,10 +183,9 @@ pass "auth loads the protected deployment environment file"
 if FAKE_DOCKER_LOG="$TEST_ROOT/docker.log" \
   PATH="$TEST_ROOT/fake-bin:$PATH" \
   SYMPHONY_SECRETS_DIR="$SECRETS_ROOT" \
-  SYMPHONY_WORKER_SERVICE='agent-worker;touch-injected' \
-  "$ADMIN" auth claude >/dev/null 2>&1; then
-  fail "injected service name unexpectedly succeeded"
+  "$ADMIN" workers auth 'karbas;touch-injected' claude >/dev/null 2>&1; then
+  fail "injected profile name unexpectedly succeeded"
 fi
-pass "compose service input is validated instead of evaluated"
+pass "worker profile input is validated instead of evaluated"
 
 printf '# %d tests passed\n' "$PASS_COUNT"

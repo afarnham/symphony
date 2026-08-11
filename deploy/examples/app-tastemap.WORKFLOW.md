@@ -28,13 +28,26 @@ hooks:
   after_create: |
     git clone --depth 1 https://github.com/GHW-Consulting/app-tastemap.git .
 agent:
-  backend: claude
+  backend: codex
   max_concurrent_agents: 3
   max_turns: 20
   max_retry_backoff_ms: 300000
+  routing:
+    ready_state: Ready
+    executor_field: Executor
+    profiles:
+      afarnham:
+        default_backend: codex
+        worker_hosts:
+          - worker@agent-worker-afarnham
+      karbas:
+        default_backend: claude
+        worker_hosts:
+          - worker@agent-worker-karbas
 worker:
   ssh_hosts:
-    - worker@agent-worker
+    - worker@agent-worker-afarnham
+    - worker@agent-worker-karbas
   max_concurrent_agents_per_host: 3
 claude:
   command: claude

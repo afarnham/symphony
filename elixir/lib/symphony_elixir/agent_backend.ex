@@ -41,10 +41,26 @@ defmodule SymphonyElixir.AgentBackend do
 
   @spec validate_config(map()) :: :ok | {:error, term()}
   def validate_config(settings) when is_map(settings) do
-    with {:ok, backend} <- resolve(settings) do
-      backend.validate_config(settings)
-    end
+    settings
+    |> configured_backend_names()
+    |> Enum.reduce_while(:ok, fn backend_name, :ok ->
+      with {:ok, backend} <- resolve(backend_name),
+           :ok <- backend.validate_config(settings) do
+        {:cont, :ok}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
+
+  @spec configured_backend_names(map()) :: [String.t()]
+  def configured_backend_names(%{agent: %{backend: backend, routing: nil}}), do: [backend]
+
+  def configured_backend_names(%{agent: %{routing: %{profiles: profiles}}})
+      when is_map(profiles),
+      do: ["codex", "claude"]
+
+  def configured_backend_names(%{agent: %{backend: backend}}), do: [backend]
 
   @spec bind_tracker_tools(Issue.t(), map()) :: map()
   def bind_tracker_tools(%Issue{} = issue, tracker_settings) when is_map(tracker_settings) do

@@ -159,7 +159,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="issue-stack">
                         <.issue_identifier identifier={entry.issue_identifier} url={entry.issue_url} />
-                        <span class="muted"><%= entry.backend || "n/a" %></span>
+                        <span class="muted"><%= route_summary(entry) %></span>
                         <span :if={transport_summary(entry.transport)} class="muted">
                           <%= transport_summary(entry.transport) %>
                         </span>
@@ -244,7 +244,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="issue-stack">
                         <.issue_identifier identifier={entry.issue_identifier} url={entry.issue_url} />
-                        <span class="muted"><%= entry.backend || "n/a" %></span>
+                        <span class="muted"><%= route_summary(entry) %></span>
                         <span :if={transport_summary(entry.transport)} class="muted">
                           <%= transport_summary(entry.transport) %>
                         </span>
@@ -320,7 +320,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="issue-stack">
                         <.issue_identifier identifier={entry.issue_identifier} url={entry.issue_url} />
-                        <span class="muted"><%= entry.backend || "n/a" %></span>
+                        <span class="muted"><%= route_summary(entry) %></span>
                         <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
                       </div>
                     </td>
@@ -401,6 +401,13 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp transport_summary(%{mcp: %{enabled: true, health: health}}), do: "MCP #{health}"
   defp transport_summary(%{mcp: %{enabled: false}}), do: "MCP disabled"
   defp transport_summary(_transport), do: nil
+
+  defp route_summary(%{profile: profile, backend: backend})
+       when is_binary(profile) and profile != "" do
+    "#{profile} · #{backend || "n/a"}"
+  end
+
+  defp route_summary(%{backend: backend}), do: to_string(backend || "n/a")
 
   defp total_runtime_seconds(payload, now) do
     completed_runtime_seconds(payload) +

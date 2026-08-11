@@ -3,7 +3,7 @@ defmodule SymphonyElixir.AgentBackendTest do
 
   alias SymphonyElixir.AgentBackend
   alias SymphonyElixir.AgentBackend.Codex
-  alias SymphonyElixir.{AgentEvent, AgentRunner, AgentTurnResult, Workflow}
+  alias SymphonyElixir.{AgentEvent, AgentRunner, AgentTurnResult, ExecutionRoute, Workflow}
   alias SymphonyElixir.Tracker.Issue
 
   defmodule FakeAppServer do
@@ -408,6 +408,13 @@ defmodule SymphonyElixir.AgentBackendTest do
 
     Process.put(:fake_backend_refresh_count, 0)
 
+    route = %ExecutionRoute{
+      profile: "afarnham",
+      ready_actor: "afarnham",
+      backend: "codex",
+      worker_hosts: []
+    }
+
     issue_state_fetcher = fn ["issue-fake-backend"] ->
       count = Process.get(:fake_backend_refresh_count, 0) + 1
       Process.put(:fake_backend_refresh_count, count)
@@ -419,15 +426,42 @@ defmodule SymphonyElixir.AgentBackendTest do
     assert :ok =
              AgentRunner.run(issue, self(),
                backend_module: FakeBackend,
+               execution_route: route,
                issue_state_fetcher: issue_state_fetcher,
                backend_options: [test_pid: self()]
              )
 
     assert_receive {:fake_backend_started, "issue-fake-backend"}
+    assert_receive {:worker_runtime_info, "issue-fake-backend", %{profile: "afarnham", ready_actor: "afarnham", backend: :fake}}
     assert_receive {:fake_backend_turn, 0, 1}
     assert_receive {:fake_backend_turn, 1, 2}
     assert_receive {:agent_worker_completed, "issue-fake-backend", %AgentTurnResult{turn_id: "turn-2"}}
     assert_receive {:fake_backend_stopped, 2, :normal}
+  end
+
+  test "AgentRunner rejects a preferred host outside the captured profile" do
+    issue = %Issue{
+      id: "issue-cross-profile-host",
+      identifier: "ROUTE-1",
+      title: "Keep credentials isolated",
+      state: "In Progress",
+      dispatchable: true
+    }
+
+    route = %ExecutionRoute{
+      profile: "afarnham",
+      ready_actor: "afarnham",
+      backend: "codex",
+      worker_hosts: ["worker@agent-worker-afarnham"]
+    }
+
+    assert_raise RuntimeError, ~r/worker_host_outside_execution_profile/, fn ->
+      AgentRunner.run(issue, self(),
+        backend_module: FakeBackend,
+        execution_route: route,
+        worker_host: "worker@agent-worker-karbas"
+      )
+    end
   end
 
   test "AgentRunner publishes a guardian that stops a blocked backend before task termination" do

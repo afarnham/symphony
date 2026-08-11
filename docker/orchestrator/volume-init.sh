@@ -5,11 +5,16 @@ target_uid=10001
 target_gid=10001
 
 for volume_root in \
-  /volumes/workspaces \
-  /volumes/claude-auth \
-  /volumes/codex-auth \
-  /volumes/worker-cache \
-  /volumes/worker-local \
+  /volumes/afarnham/workspaces \
+  /volumes/afarnham/claude-auth \
+  /volumes/afarnham/codex-auth \
+  /volumes/afarnham/worker-cache \
+  /volumes/afarnham/worker-local \
+  /volumes/karbas/workspaces \
+  /volumes/karbas/claude-auth \
+  /volumes/karbas/codex-auth \
+  /volumes/karbas/worker-cache \
+  /volumes/karbas/worker-local \
   /volumes/logs
 do
   if [ ! -d "$volume_root" ] || [ -L "$volume_root" ]; then

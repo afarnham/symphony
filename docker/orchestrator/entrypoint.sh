@@ -7,6 +7,7 @@ port=${SYMPHONY_PORT:-4000}
 private_key=/run/secrets/worker_ssh_private_key
 host_public_key=/run/secrets/worker_ssh_host_public_key
 ssh_dir=/tmp/symphony-ssh
+ssh_hosts=${SYMPHONY_SSH_HOSTS:-agent-worker}
 
 fail() {
   printf '%s\n' "$1" >&2
@@ -39,13 +40,24 @@ case "$host_key" in
 esac
 
 known_hosts="$ssh_dir/known_hosts"
-printf '[agent-worker]:2222 %s\n' "$host_key" >"$known_hosts"
+: >"$known_hosts"
+
+for ssh_host in $ssh_hosts; do
+  case "$ssh_host" in
+    *[!A-Za-z0-9.-]*|'') fail "SYMPHONY_SSH_HOSTS contains an invalid host" ;;
+  esac
+
+  printf '[%s]:2222 %s\n' "$ssh_host" "$host_key" >>"$known_hosts"
+done
 unset host_key
 chmod 0600 "$known_hosts"
 
-cat >"$ssh_dir/config" <<EOF
-Host agent-worker
-  HostName agent-worker
+: >"$ssh_dir/config"
+
+for ssh_host in $ssh_hosts; do
+  cat >>"$ssh_dir/config" <<EOF
+Host $ssh_host
+  HostName $ssh_host
   User worker
   Port 2222
   IdentityFile $ssh_dir/worker_key
@@ -55,6 +67,7 @@ Host agent-worker
   UserKnownHostsFile $known_hosts
   LogLevel ERROR
 EOF
+done
 chmod 0600 "$ssh_dir/config"
 
 set -- \
