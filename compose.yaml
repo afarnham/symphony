@@ -1,7 +1,7 @@
 name: symphony
 
 x-agent-worker: &agent-worker
-  image: ${SYMPHONY_WORKER_IMAGE:-ghcr.io/ghw-consulting/symphony-agent-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+  image: ${SYMPHONY_WORKER_IMAGE:-ghcr.io/afarnham/symphony-agent-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000}
   pull_policy: missing
   restart: unless-stopped
   depends_on:
@@ -40,7 +40,7 @@ x-agent-worker: &agent-worker
 
 services:
   volume-init:
-    image: ${SYMPHONY_IMAGE:-ghcr.io/ghw-consulting/symphony@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+    image: ${SYMPHONY_IMAGE:-ghcr.io/afarnham/symphony@sha256:0000000000000000000000000000000000000000000000000000000000000000}
     pull_policy: missing
     user: "0:0"
     working_dir: /
@@ -112,7 +112,7 @@ services:
         target: openai_api_key
 
   symphony:
-    image: ${SYMPHONY_IMAGE:-ghcr.io/ghw-consulting/symphony@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+    image: ${SYMPHONY_IMAGE:-ghcr.io/afarnham/symphony@sha256:0000000000000000000000000000000000000000000000000000000000000000}
     pull_policy: missing
     restart: unless-stopped
     read_only: true

@@ -7,7 +7,7 @@ Accepted implementation specification.
 ## Target
 
 This specification targets the Elixir implementation in
-[`GHW-Consulting/symphony`](https://github.com/GHW-Consulting/symphony), forked
+[`afarnham/symphony`](https://github.com/afarnham/symphony), forked
 from [`openai/symphony`](https://github.com/openai/symphony), based on the
 architecture present at commit
 `f8e8b8a670c799f6e0ade7a8c25c4bf4a4a56ec7` or a compatible later revision.
