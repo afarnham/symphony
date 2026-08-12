@@ -49,6 +49,10 @@ worker:
     - worker@agent-worker-afarnham
     - worker@agent-worker-karbas
   max_concurrent_agents_per_host: 3
+codex:
+  thread_sandbox: danger-full-access
+  turn_sandbox_policy:
+    type: dangerFullAccess
 claude:
   command: claude
   permission_mode: bypassPermissions

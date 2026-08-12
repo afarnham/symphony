@@ -325,6 +325,14 @@ explicit trust decision: the agent can run commands and change files without an 
 approval prompt. Use it only with the dedicated worker, a trusted repository, and the narrowly
 scoped worker credential. A more restrictive mode may pause unattended work for approval.
 
+The example also sets Codex's thread sandbox to `danger-full-access` and its turn policy to
+`dangerFullAccess`. Codex's normal `workspace-write` sandbox creates an inner Linux namespace,
+which is unavailable inside the capability-free worker container. In this deployment, the worker
+container is the operating-system sandbox: it runs as an unprivileged user with a read-only root
+filesystem, no Linux capabilities, no Docker socket, and only its profile-specific workspace,
+cache, authentication, and narrowly scoped repository credential mounted. Keep Codex's normal
+`workspace-write` default when Symphony runs outside this isolated container profile.
+
 The workflow is mounted read-only into the orchestrator. The workspace root `/workspaces` is on the
 selected profile's worker volume. The configured SSH destinations are
 `worker@agent-worker-afarnham` and `worker@agent-worker-karbas`; neither is exposed on a host port.
