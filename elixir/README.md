@@ -66,7 +66,7 @@ mise exec -- elixir --version
 ## Run
 
 ```bash
-git clone https://github.com/GHW-Consulting/symphony
+git clone https://github.com/afarnham/symphony
 cd symphony/elixir
 mise trust
 mise install

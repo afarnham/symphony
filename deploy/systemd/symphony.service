@@ -1,6 +1,6 @@
 [Unit]
 Description=Symphony container stack
-Documentation=https://github.com/GHW-Consulting/symphony/blob/main/docs/linux-container-deployment.md
+Documentation=https://github.com/afarnham/symphony/blob/main/docs/linux-container-deployment.md
 Wants=network-online.target
 After=network-online.target docker.service
 Requires=docker.service

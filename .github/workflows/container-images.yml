@@ -84,11 +84,11 @@ jobs:
       matrix:
         include:
           - name: symphony
-            image: ghcr.io/ghw-consulting/symphony
+            image: ghcr.io/afarnham/symphony
             context: .
             dockerfile: ./Dockerfile
           - name: agent-worker
-            image: ghcr.io/ghw-consulting/symphony-agent-worker
+            image: ghcr.io/afarnham/symphony-agent-worker
             context: ./docker/worker
             dockerfile: ./docker/worker/Dockerfile
 
@@ -142,11 +142,11 @@ jobs:
       matrix:
         include:
           - name: symphony
-            image: ghcr.io/ghw-consulting/symphony
+            image: ghcr.io/afarnham/symphony
             context: .
             dockerfile: ./Dockerfile
           - name: agent-worker
-            image: ghcr.io/ghw-consulting/symphony-agent-worker
+            image: ghcr.io/afarnham/symphony-agent-worker
             context: ./docker/worker
             dockerfile: ./docker/worker/Dockerfile
 

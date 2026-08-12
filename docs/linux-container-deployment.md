@@ -128,7 +128,7 @@ moving branch:
 
 ```bash
 sudo install -d -o root -g root -m 0755 /opt/symphony
-sudo git clone https://github.com/GHW-Consulting/symphony.git /opt/symphony
+sudo git clone https://github.com/afarnham/symphony.git /opt/symphony
 sudo git -C /opt/symphony checkout --detach REPLACE_WITH_RELEASE_TAG_OR_COMMIT
 ```
 
