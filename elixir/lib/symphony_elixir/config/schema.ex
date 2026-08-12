@@ -350,7 +350,7 @@ defmodule SymphonyElixir.Config.Schema do
 
       field(:approval_policy, StringOrMap,
         default: %{
-          "reject" => %{
+          "granular" => %{
             "sandbox_approval" => true,
             "rules" => true,
             "mcp_elicitations" => true

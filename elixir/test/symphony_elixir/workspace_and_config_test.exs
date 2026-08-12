@@ -1070,7 +1070,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.codex.command == "codex app-server"
 
     assert config.codex.approval_policy == %{
-             "reject" => %{
+             "granular" => %{
                "sandbox_approval" => true,
                "rules" => true,
                "mcp_elicitations" => true
@@ -1510,14 +1510,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              Schema.parse(%{
                tracker: %{kind: "linear", api_key: "$#{empty_secret_env}"},
                workspace: %{root: "$#{missing_workspace_env}"},
-               codex: %{approval_policy: %{reject: %{sandbox_approval: true}}}
+               codex: %{approval_policy: %{granular: %{sandbox_approval: true}}}
              })
 
     assert settings.tracker.api_key == nil
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
 
     assert settings.codex.approval_policy == %{
-             "reject" => %{"sandbox_approval" => true}
+             "granular" => %{"sandbox_approval" => true}
            }
 
     assert {:ok, settings} =
