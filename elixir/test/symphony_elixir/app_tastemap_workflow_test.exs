@@ -4,7 +4,7 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
   alias SymphonyElixir.Workflow
 
   @workflow_path Path.expand(
-                   "../../../deploy/examples/app-tastemap.WORKFLOW.md",
+                   "../../../deploy/workflows/app-tastemap.WORKFLOW.md",
                    __DIR__
                  )
 

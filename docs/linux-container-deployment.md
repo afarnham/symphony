@@ -293,16 +293,16 @@ This keeps the value out of both the workflow and the container's declared envir
 
 ## Configure a workflow
 
-For the Provenance Map deployment, install the checked-in example:
+For the Provenance Map deployment, install the checked-in canonical workflow:
 
 ```bash
 sudo install -o root -g root -m 0644 \
-  /opt/symphony/deploy/examples/app-tastemap.WORKFLOW.md \
+  /opt/symphony/deploy/workflows/app-tastemap.WORKFLOW.md \
   /etc/symphony/WORKFLOW.md
 sudoedit /etc/symphony/WORKFLOW.md
 ```
 
-The example uses GitHub Project 2 and repository `GHW-Consulting/app-tastemap`. Add a Project
+The workflow uses GitHub Project 2 and repository `GHW-Consulting/app-tastemap`. Add a Project
 single-select field named `Executor` with exactly `Claude` and `Codex` options. Its Status flow is:
 
 | Status | Meaning |
@@ -326,18 +326,18 @@ in PR #587 and graph router in PR #591 are both merged to that repository's `mai
 mandatory router is deliberately a deployment dependency: without it, claimed tickets block
 before any repository work.
 
-The example maps `afarnham` to a Codex-default worker and `karbas` to a Claude-default worker. The
+The workflow maps `afarnham` to a Codex-default worker and `karbas` to a Claude-default worker. The
 person moving an item to `Ready` must also be an issue assignee. Leaving Executor blank uses that
 person's default; setting it overrides the backend without changing whose credentials run the
 ticket. Do not put GitHub credentials in the clone URL. The worker entrypoint supplies the shared
 repository credential to Git's credential helper.
 
-The example sets Claude's `permission_mode` to `bypassPermissions` for unattended work. That is an
+The workflow sets Claude's `permission_mode` to `bypassPermissions` for unattended work. That is an
 explicit trust decision: the agent can run commands and change files without an interactive
 approval prompt. Use it only with the dedicated worker, a trusted repository, and the narrowly
 scoped worker credential. A more restrictive mode may pause unattended work for approval.
 
-The example also sets Codex's thread sandbox to `danger-full-access` and its turn policy to
+The workflow also sets Codex's thread sandbox to `danger-full-access` and its turn policy to
 `dangerFullAccess`. Codex's normal `workspace-write` sandbox creates an inner Linux namespace,
 which is unavailable inside the capability-free worker container. In this deployment, the worker
 container is the operating-system sandbox: it runs as an unprivileged user with a read-only root
@@ -349,7 +349,7 @@ The workflow is mounted read-only into the orchestrator. The workspace root `/wo
 selected profile's worker volume. The configured SSH destinations are
 `worker@agent-worker-afarnham` and `worker@agent-worker-karbas`; neither is exposed on a host port.
 
-The example's `server.host: 0.0.0.0` is required inside a container: a server bound to container
+The workflow's `server.host: 0.0.0.0` is required inside a container: a server bound to container
 loopback cannot receive Docker's published-port traffic. Exposure is still restricted on the VM by
 `SYMPHONY_BIND_ADDRESS=127.0.0.1` in `deployment.env`.
 
