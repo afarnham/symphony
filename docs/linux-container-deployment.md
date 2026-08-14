@@ -311,8 +311,20 @@ single-select field named `Executor` with exactly `Claude` and `Codex` options. 
 | `Ready` | Eligible on the next poll. No routing label is required. |
 | `In Progress` | Claimed and running. |
 | `Blocked` | Agent needs human intervention; move it back to `Ready` after resolution. |
-| `In Review` | Implementation complete and handed to a human. |
+| `In Review` | Generic implementation complete and handed to a human. Wine graph runs do not stop here between bands. |
 | `Done` / `Cancelled` | Terminal. |
+
+The app-tastemap workflow installs repository dependencies and then requires every claimed ticket
+to pass through the repository's `pnpm wine-dive -- route-ticket` command before exploration or
+edits. Generic tickets follow the ordinary `In Progress` to `In Review` lifecycle. A ticket routed
+to the wine-dive graph remains `In Progress` across its sequential band PRs and moves directly to
+`Done` only after terminal graph closeout. A router error or malformed labeled wine ticket fails
+closed through the normal `Blocked` flow; it never falls through to generic implementation.
+
+Do not install or restart Symphony with this workflow until the app-tastemap ticket-format change
+in PR #587 and graph router in PR #591 are both merged to that repository's `main`. The workflow's
+mandatory router is deliberately a deployment dependency: without it, claimed tickets block
+before any repository work.
 
 The example maps `afarnham` to a Codex-default worker and `karbas` to a Claude-default worker. The
 person moving an item to `Ready` must also be an issue assignee. Leaving Executor blank uses that
@@ -544,7 +556,8 @@ ssh -L 4000:127.0.0.1:4000 admin@symphony-vm
 
 Then open `http://127.0.0.1:4000` locally.
 
-Run an end-to-end smoke test with a low-risk issue in the configured repository:
+After those app-tastemap prerequisites are deployed, run an end-to-end smoke test with low-risk
+issues in the configured repository:
 
 1. Add the issue to Project 2 in `Backlog`; confirm Symphony does not claim it.
 2. Move only its Status to `Ready`; do not add a routing label.
@@ -556,10 +569,15 @@ Run an end-to-end smoke test with a low-risk issue in the configured repository:
 5. Confirm the agent can clone, create a branch, push, and open a pull request using only the worker
    credential.
 6. Confirm tracker comments and Status transitions succeed through the session-scoped tools.
-7. Confirm successful work moves to `In Review`.
-8. For the blocker path, use a test requiring unavailable human input. Confirm it moves to
+7. Use a generic issue and confirm successful work moves to `In Review`.
+8. Use a dummy `wine dive` issue in the new ticket format. Confirm the router comments its durable
+   run receipt, the graph starts or resumes that run, and the Project item remains `In Progress`
+   rather than moving to `In Review` after an intermediate band.
+9. Use a malformed `wine dive` issue. Confirm routing stops before generic implementation and the
+   item moves to `Blocked`; then correct the ticket and move it back to `Ready` to verify resume.
+10. For the generic blocker path, use a test requiring unavailable human input. Confirm it moves to
    `Blocked`, then resolve the input and move it back to `Ready`.
-9. Inspect logs for accidental GitHub, Claude, Codex, SSH, or MCP token output before accepting the
+11. Inspect logs for accidental GitHub, Claude, Codex, SSH, or MCP token output before accepting the
    deployment.
 
 Do not retire the prior deployment until this smoke test passes on the VM.

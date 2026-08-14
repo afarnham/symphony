@@ -27,6 +27,7 @@ workspace:
 hooks:
   after_create: |
     git clone --depth 1 https://github.com/GHW-Consulting/app-tastemap.git .
+    pnpm install --frozen-lockfile
 agent:
   backend: codex
   max_concurrent_agents: 3
@@ -76,11 +77,37 @@ No description was provided.
 
 Work only in the provided repository workspace.
 
-1. Use `tracker_get_issue` before implementation to refresh the issue and project status.
-2. Investigate, implement, and validate the requested change autonomously.
-3. Use `tracker_add_comment` for a concise durable progress or blocker note when useful.
-4. After implementation and validation are complete, use `tracker_update_state` to move the item
-   to `In Review`.
-5. If a real external blocker prevents completion, record it with `tracker_add_comment` and emit
-   the input-required sentinel. Symphony moves the item to `Blocked`; a human moves it back to
-   `Ready` after resolving the blocker.
+1. Use `tracker_get_issue` before any exploration, implementation, or repository edits. Treat its
+   refreshed issue fields and `native_ref` as authoritative.
+2. Route every ticket before doing any other repository work:
+
+   ```sh
+   pnpm wine-dive -- route-ticket \
+     --issue <native_ref.issue_number> \
+     --project-item-id <native_ref.project_item_id>
+   ```
+
+   Substitute the refreshed native values. If `native_ref.project_item_id` is absent, omit that
+   option. The command must exit successfully and print exactly one recognized route:
+   `SYMPHONY_ROUTE=generic` or `SYMPHONY_ROUTE=wine-dive-graph`. On failure or ambiguous output,
+   add a tracker comment containing the command failure, emit the input-required sentinel, and
+   stop. A ticket labeled `wine dive` must not fall through to generic implementation.
+3. For `SYMPHONY_ROUTE=generic`, investigate, implement, and validate the requested change
+   autonomously. Add a concise durable tracker comment when useful. After the implementation and
+   validation are complete, use `tracker_update_state` to move the item to `In Review`.
+4. For `SYMPHONY_ROUTE=wine-dive-graph`, use the printed `WINE_DIVE_RUN_ID` as the durable run
+   receipt. Comment that receipt on the ticket, run
+   `pnpm wine-dive -- status --id <WINE_DIVE_RUN_ID>`, and execute only the next legal graph node
+   shown by the checkpoint. Record every completed graph transition with
+   `pnpm wine-dive -- record --id <WINE_DIVE_RUN_ID> --event <event-json-file>`. Do not invoke the
+   manual `dive wine` selector or the generic implementation path. The graph owns discovery, the
+   ticket-authorized band prefix, sequential producer work, validation, apply, PR/merge tracking,
+   deferred-work persistence, and closeout. Keep the Project item `In Progress` between band PRs;
+   do not move it to `In Review` merely because one band or agent turn finishes. Only after the
+   graph reports `complete`, all selected band merges are confirmed, and its closeout artifacts
+   are durable should you close the GitHub issue and use `tracker_update_state` to move the item to
+   `Done`. In other words: move the item to `Done` only at terminal graph closeout.
+5. For either route, if a real external blocker prevents further legal work, add a concise tracker
+   comment with the exact checkpoint and required human action, emit the input-required sentinel,
+   and stop. Symphony moves the item to `Blocked`; after resolution, a human moves it back to
+   `Ready` and the next run resumes from durable state.
