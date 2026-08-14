@@ -351,6 +351,73 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server treats a completed agent-message blocker sentinel as input required" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-sentinel-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-592")
+      codex_binary = Path.join(test_root, "fake-codex")
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+      while IFS= read -r _line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-592"}}}'
+            ;;
+          3)
+            printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-592"}}}'
+            ;;
+          4)
+            printf '%s\n' '{"method":"item/completed","params":{"item":{"id":"message-blocked","type":"agentMessage","text":"Cannot continue.\\n<!-- symphony:needs-input -->"}}}'
+            printf '%s\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-sentinel",
+        identifier: "MT-592",
+        title: "Sentinel blocker",
+        description: "Cannot continue without operator input",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-592",
+        labels: ["backend"]
+      }
+
+      assert {:error, {:turn_input_required, payload}} =
+               AppServer.run(workspace, "Emit blocker sentinel", issue)
+
+      assert payload["method"] == "item/completed"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server treats MCP elicitation requests as hard input blockers" do
     test_root =
       Path.join(

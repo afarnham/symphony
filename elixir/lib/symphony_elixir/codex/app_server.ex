@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   @turn_start_id 3
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
+  @needs_input_sentinel "<!-- symphony:needs-input -->"
   @type session :: %{
           port: port(),
           metadata: map(),
@@ -1103,6 +1104,16 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp needs_input?("mcpServer/elicitation/request", payload) when is_map(payload), do: true
+
+  defp needs_input?(
+         "item/completed",
+         %{"params" => %{"item" => %{"type" => "agentMessage", "text" => text}}}
+       )
+       when is_binary(text) do
+    text
+    |> String.split(~r/\R/)
+    |> Enum.any?(&(String.trim(&1) == @needs_input_sentinel))
+  end
 
   defp needs_input?(method, payload)
        when is_binary(method) and is_map(payload) do
