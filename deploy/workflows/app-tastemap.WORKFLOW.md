@@ -51,6 +51,7 @@ worker:
     - worker@agent-worker-karbas
   max_concurrent_agents_per_host: 3
 codex:
+  approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
     type: dangerFullAccess
@@ -83,9 +84,10 @@ the sentinel.
 
 1. Use `tracker_get_issue` before any exploration, implementation, or repository edits. Treat its
    refreshed issue fields and `native_ref` as authoritative. Write the JSON object contained in
-   the tracker tool result's `output` field—the normalized `tracker_get_issue payload` with
-   `description`, `labels`, and `native_ref`—unchanged to `/tmp/symphony-ticket.json`. Do not fetch
-   or reconstruct the issue with `gh` or another GitHub API call.
+   the tracker tool result's `output` field—the normalized `tracker_get_issue payload` with a
+   top-level `issue` object containing `description`, `labels`, and `native_ref`—unchanged to
+   `/tmp/symphony-ticket.json`. Do not unwrap or reconstruct the issue, and do not fetch it with
+   `gh` or another GitHub API call.
 2. Route every ticket before doing any other repository work:
 
    ```sh

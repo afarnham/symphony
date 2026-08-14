@@ -14,10 +14,14 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
     assert get_in(config, ["hooks", "after_create"]) =~
              "pnpm install --frozen-lockfile"
 
+    assert get_in(config, ["codex", "approval_policy"]) == "never"
+
     assert prompt =~ "pnpm wine-dive -- route-ticket"
     assert prompt =~ "--ticket-file"
     refute prompt =~ "--issue <native_ref.issue_number>"
     assert prompt =~ "tracker_get_issue payload"
+    assert prompt =~ "top-level `issue` object"
+    assert prompt =~ "Do not unwrap"
     assert prompt =~ "native_ref.project_item_id"
     assert prompt =~ "SYMPHONY_ROUTE=generic"
     assert prompt =~ "SYMPHONY_ROUTE=wine-dive-graph"
