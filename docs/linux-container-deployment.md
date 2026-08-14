@@ -115,7 +115,9 @@ The worker credential is used only by the two worker services for HTTPS Git and 
 should be a fine-grained token limited to the target repository, with Contents read/write, Pull
 requests read/write, and Metadata read access. Add other repository permissions only when a real
 workflow requires them. The worker does not need organization Projects permission; tracker comments
-and status changes go through Symphony's session-scoped tools.
+and status changes go through Symphony's session-scoped tools. Repository workflows must reuse the
+normalized `tracker_get_issue` payload for issue routing instead of granting the worker a second
+issue-read path.
 
 For unattended use, prefer short-lived GitHub App installation tokens when an installation-token
 credential helper is available. The initial Compose profile also supports dedicated fine-grained
@@ -316,15 +318,18 @@ single-select field named `Executor` with exactly `Claude` and `Codex` options. 
 
 The app-tastemap workflow installs repository dependencies and then requires every claimed ticket
 to pass through the repository's `pnpm wine-dive -- route-ticket` command before exploration or
-edits. Generic tickets follow the ordinary `In Progress` to `In Review` lifecycle. A ticket routed
-to the wine-dive graph remains `In Progress` across its sequential band PRs and moves directly to
-`Done` only after terminal graph closeout. A router error or malformed labeled wine ticket fails
-closed through the normal `Blocked` flow; it never falls through to generic implementation.
+edits. It serializes the normalized `tracker_get_issue` output to a temporary ticket file, avoiding
+a second GitHub issue read with the narrower worker credential. Generic tickets follow the ordinary
+`In Progress` to `In Review` lifecycle. A ticket routed to the wine-dive graph remains `In Progress`
+across its sequential band PRs and moves directly to `Done` only after terminal graph closeout. A
+router error or malformed labeled wine ticket fails closed through the normal `Blocked` flow; it
+never falls through to generic implementation.
 
-Do not install or restart Symphony with this workflow until the app-tastemap ticket-format change
-in PR #587 and graph router in PR #591 are both merged to that repository's `main`. The workflow's
-mandatory router is deliberately a deployment dependency: without it, claimed tickets block
-before any repository work.
+Do not install or restart Symphony with this workflow until app-tastemap's `main` accepts the
+normalized tracker payload in `route-ticket --ticket-file`. The original ticket-format and graph
+router changes landed in app-tastemap PRs #587 and #591. The mandatory router is deliberately a
+deployment dependency: without matching app-side support, claimed tickets block before any
+repository work.
 
 The workflow maps `afarnham` to a Codex-default worker and `karbas` to a Claude-default worker. The
 person moving an item to `Ready` must also be an issue assignee. Leaving Executor blank uses that

@@ -15,7 +15,9 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
              "pnpm install --frozen-lockfile"
 
     assert prompt =~ "pnpm wine-dive -- route-ticket"
-    assert prompt =~ "native_ref.issue_number"
+    assert prompt =~ "--ticket-file"
+    refute prompt =~ "--issue <native_ref.issue_number>"
+    assert prompt =~ "tracker_get_issue payload"
     assert prompt =~ "native_ref.project_item_id"
     assert prompt =~ "SYMPHONY_ROUTE=generic"
     assert prompt =~ "SYMPHONY_ROUTE=wine-dive-graph"
@@ -31,5 +33,6 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
     assert prompt =~ "Keep the Project item `In Progress` between band PRs"
     assert prompt =~ "move the item to `Done`"
     assert prompt =~ "emit the input-required sentinel"
+    assert prompt =~ "<!-- symphony:needs-input -->"
   end
 end

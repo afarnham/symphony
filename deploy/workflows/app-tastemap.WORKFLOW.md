@@ -77,18 +77,26 @@ No description was provided.
 
 Work only in the provided repository workspace.
 
+Whenever these instructions say to emit the input-required sentinel, put the exact line
+`<!-- symphony:needs-input -->` on a line by itself in your final response. Do not merely describe
+the sentinel.
+
 1. Use `tracker_get_issue` before any exploration, implementation, or repository edits. Treat its
-   refreshed issue fields and `native_ref` as authoritative.
+   refreshed issue fields and `native_ref` as authoritative. Write the JSON object contained in
+   the tracker tool result's `output` field—the normalized `tracker_get_issue payload` with
+   `description`, `labels`, and `native_ref`—unchanged to `/tmp/symphony-ticket.json`. Do not fetch
+   or reconstruct the issue with `gh` or another GitHub API call.
 2. Route every ticket before doing any other repository work:
 
    ```sh
    pnpm wine-dive -- route-ticket \
-     --issue <native_ref.issue_number> \
+     --ticket-file /tmp/symphony-ticket.json \
      --project-item-id <native_ref.project_item_id>
    ```
 
    Substitute the refreshed native values. If `native_ref.project_item_id` is absent, omit that
-   option. The command must exit successfully and print exactly one recognized route:
+   option. Remove the temporary ticket file after the command returns. The command must exit
+   successfully and print exactly one recognized route:
    `SYMPHONY_ROUTE=generic` or `SYMPHONY_ROUTE=wine-dive-graph`. On failure or ambiguous output,
    add a tracker comment containing the command failure, emit the input-required sentinel, and
    stop. A ticket labeled `wine dive` must not fall through to generic implementation.
