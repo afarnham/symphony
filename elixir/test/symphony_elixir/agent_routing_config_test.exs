@@ -9,6 +9,7 @@ defmodule SymphonyElixir.AgentRoutingConfigTest do
 
     assert settings.agent.routing.ready_state == "Ready"
     assert settings.agent.routing.executor_field == "Executor"
+    assert settings.agent.routing.trusted_release_actors == ["thor-claw"]
 
     assert settings.agent.routing.profiles == %{
              "afarnham" => %{
@@ -23,6 +24,13 @@ defmodule SymphonyElixir.AgentRoutingConfigTest do
 
     assert Enum.sort(AgentBackend.configured_backend_names(settings)) == ["claude", "codex"]
     assert :ok = Config.validate_settings(settings)
+  end
+
+  test "defaults trusted release actors to an empty list" do
+    config = update_in(routed_config(), [:agent, :routing], &Map.delete(&1, :trusted_release_actors))
+
+    assert {:ok, settings} = Schema.parse(config)
+    assert settings.agent.routing.trusted_release_actors == []
   end
 
   test "rejects shared hosts, invalid defaults, and invalid Ready state semantics" do
@@ -61,6 +69,30 @@ defmodule SymphonyElixir.AgentRoutingConfigTest do
              |> Schema.parse()
 
     assert message =~ "profile logins must be unique after normalization"
+  end
+
+  test "rejects invalid or duplicate trusted release actors" do
+    assert {:error, {:invalid_workflow_config, malformed_message}} =
+             routed_config()
+             |> put_in([:agent, :routing, :trusted_release_actors], "thor-claw")
+             |> Schema.parse()
+
+    assert malformed_message =~ "trusted_release_actors is invalid"
+
+    assert {:error, {:invalid_workflow_config, invalid_message}} =
+             routed_config()
+             |> put_in([:agent, :routing, :trusted_release_actors], ["not a login"])
+             |> Schema.parse()
+
+    assert invalid_message =~ "trusted_release_actors must contain GitHub logins"
+
+    assert {:error, {:invalid_workflow_config, duplicate_message}} =
+             routed_config()
+             |> put_in([:agent, :routing, :trusted_release_actors], ["Thor-Claw", " thor-claw "])
+             |> Schema.parse()
+
+    assert duplicate_message =~
+             "trusted_release_actors must be unique after normalization: thor-claw"
   end
 
   test "reports malformed profiles without crashing normalization" do
@@ -120,6 +152,7 @@ defmodule SymphonyElixir.AgentRoutingConfigTest do
         routing: %{
           ready_state: " Ready ",
           executor_field: " Executor ",
+          trusted_release_actors: [" Thor-Claw "],
           profiles: %{
             "AFarnham" => %{
               default_backend: "codex",

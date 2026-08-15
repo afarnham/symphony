@@ -173,9 +173,11 @@ Notes:
 - `agent.backend` selects `codex` or `claude`; it defaults to `codex` for existing workflows.
 - Optional `agent.routing` makes backend and SSH-host selection issue-specific for GitHub Projects.
   It requires `ready_state`, `executor_field`, and a profile map keyed by GitHub login. Each profile
-  supplies `default_backend` plus an exclusive, non-empty `worker_hosts` list. The user who moves
-  the item to Ready must be a current assignee and a configured profile. An unset Executor uses
-  that profile's default; `Claude` or `Codex` overrides only the backend. See
+  supplies `default_backend` plus an exclusive, non-empty `worker_hosts` list. In the direct human
+  flow, the user who moves the item to Ready must be a current assignee and a configured profile.
+  An unset Executor uses that profile's default; `Claude` or `Codex` overrides only the backend.
+  Optional `trusted_release_actors` lets a listed governor move an item to Ready and routes it to
+  the only assigned configured profile; zero or multiple matching profiles fail closed. See
   [the routing contract](../docs/assignee-executor-routing.md).
 - `agent.max_turns` caps how many back-to-back agent turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
@@ -226,7 +228,10 @@ This profile uses the project Status field as the queue. No routing label is req
    intentional second routing constraint.
    For assignee-aware backend routing, also add a single-select `Executor` field with exactly
    `Claude` and `Codex` options. Configure `agent.routing`, assign the issue to yourself, and move
-   it to Ready yourself; labels are not involved.
+   it to Ready yourself; labels are not involved. For automated release, add the governor's GitHub
+   login to `trusted_release_actors`, assign exactly one configured profile to the issue, and let
+   the governor move it to Ready with its own token. See the routing contract for the setup and
+   least-privilege checklist.
 2. Create a host-side GitHub credential. For an organization-owned project, the recommended
    [fine-grained token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
    has access only to the target repository, organization `Projects: write`, and repository

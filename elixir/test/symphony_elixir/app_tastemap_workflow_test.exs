@@ -15,6 +15,7 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
              "pnpm install --frozen-lockfile"
 
     assert get_in(config, ["codex", "approval_policy"]) == "never"
+    assert get_in(config, ["agent", "routing", "trusted_release_actors"]) == ["thor-claw"]
 
     assert prompt =~ "pnpm wine-dive -- route-ticket"
     assert prompt =~ "--ticket-file"

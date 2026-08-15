@@ -36,6 +36,8 @@ agent:
   routing:
     ready_state: Ready
     executor_field: Executor
+    trusted_release_actors:
+      - thor-claw
     profiles:
       afarnham:
         default_backend: codex

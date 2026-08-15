@@ -155,23 +155,31 @@ defmodule SymphonyElixir.Config.Schema do
 
     @primary_key false
     @backends ["codex", "claude"]
+    @github_login_pattern ~r/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/
 
     embedded_schema do
       field(:ready_state, :string)
       field(:executor_field, :string)
+      field(:trusted_release_actors, {:array, :string}, default: [])
       field(:profiles, :map)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:ready_state, :executor_field, :profiles], empty_values: [])
+      |> cast(
+        attrs,
+        [:ready_state, :executor_field, :trusted_release_actors, :profiles],
+        empty_values: []
+      )
       |> validate_required([:ready_state, :executor_field, :profiles])
       |> validate_change(:ready_state, &validate_present_string/2)
       |> validate_change(:executor_field, &validate_present_string/2)
+      |> validate_change(:trusted_release_actors, &validate_trusted_release_actors/2)
       |> validate_change(:profiles, &validate_profiles/2)
       |> update_change(:ready_state, &String.trim/1)
       |> update_change(:executor_field, &String.trim/1)
+      |> update_change(:trusted_release_actors, &Enum.map(&1, fn actor -> normalize_login(actor) end))
       |> update_change(:profiles, &normalize_profiles/1)
     end
 
@@ -197,6 +205,32 @@ defmodule SymphonyElixir.Config.Schema do
 
     defp validate_profiles(:profiles, _profiles), do: [profiles: "must contain at least one profile"]
 
+    defp validate_trusted_release_actors(:trusted_release_actors, actors) when is_list(actors) do
+      normalized = Enum.map(actors, &normalize_login/1)
+
+      invalid? =
+        Enum.any?(normalized, fn actor ->
+          actor == "" or not String.match?(actor, @github_login_pattern)
+        end)
+
+      duplicates =
+        normalized
+        |> Enum.frequencies()
+        |> Enum.filter(fn {_actor, count} -> count > 1 end)
+        |> Enum.map(&elem(&1, 0))
+        |> Enum.sort()
+
+      []
+      |> maybe_add_field_error(
+        invalid?,
+        {:trusted_release_actors, "must contain GitHub logins"}
+      )
+      |> maybe_add_field_error(
+        duplicates != [],
+        {:trusted_release_actors, "must be unique after normalization: #{Enum.join(duplicates, ", ")}"}
+      )
+    end
+
     defp validate_profile(login, profile) when is_map(profile) do
       normalized_login = login |> to_string() |> String.trim() |> String.downcase()
       backend = Map.get(profile, "default_backend") || Map.get(profile, :default_backend)
@@ -204,7 +238,7 @@ defmodule SymphonyElixir.Config.Schema do
 
       []
       |> maybe_add_error(
-        normalized_login == "" or not String.match?(normalized_login, ~r/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/),
+        normalized_login == "" or not String.match?(normalized_login, @github_login_pattern),
         "profile #{inspect(login)} must be a GitHub login"
       )
       |> maybe_add_error(
@@ -289,11 +323,17 @@ defmodule SymphonyElixir.Config.Schema do
 
     defp normalize_profile(_profile), do: %{}
 
+    defp normalize_login(login) when is_binary(login),
+      do: login |> String.trim() |> String.downcase()
+
     defp normalize_host(host) when is_binary(host), do: String.trim(host)
     defp normalize_host(_host), do: ""
 
     defp maybe_add_error(errors, true, error), do: errors ++ [error]
     defp maybe_add_error(errors, false, _error), do: errors
+
+    defp maybe_add_field_error(errors, true, error), do: errors ++ [error]
+    defp maybe_add_field_error(errors, false, _error), do: errors
   end
 
   defmodule Agent do
