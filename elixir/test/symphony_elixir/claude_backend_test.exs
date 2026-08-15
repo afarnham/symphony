@@ -475,6 +475,14 @@ defmodule SymphonyElixir.ClaudeBackendTest do
     assert_process_tree_stopped(workspace)
   end
 
+  test "the process probe treats zombie processes as stopped" do
+    assert process_running_status?("R")
+    assert process_running_status?("S+")
+    refute process_running_status?("")
+    refute process_running_status?("Z")
+    refute process_running_status?("Z+")
+  end
+
   test "supports a safely tokenized configured command prefix", %{
     workspace: workspace,
     issue: issue
@@ -908,10 +916,15 @@ defmodule SymphonyElixir.ClaudeBackendTest do
   end
 
   defp process_alive?(pid) do
-    case System.cmd("kill", ["-0", pid], stderr_to_stdout: true) do
-      {_output, 0} -> true
+    case System.cmd("ps", ["-o", "stat=", "-p", pid], stderr_to_stdout: true) do
+      {status, 0} -> process_running_status?(status)
       {_output, _status} -> false
     end
+  end
+
+  defp process_running_status?(status) do
+    status = String.trim(status)
+    status != "" and not String.starts_with?(status, "Z")
   end
 
   defp assert_eventually(fun, attempts \\ @process_stop_attempts)
