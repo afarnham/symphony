@@ -7,6 +7,8 @@ defmodule SymphonyElixir.ClaudeBackendTest do
 
   @fake_claude Path.expand("../fixtures/claude/fake_claude.sh", __DIR__)
   @fake_ssh Path.expand("../fixtures/claude/fake_ssh.sh", __DIR__)
+  @test_read_timeout_ms 2_000
+  @process_stop_attempts 1_000
 
   setup do
     original_auth_status = System.get_env("FAKE_CLAUDE_AUTH_STATUS")
@@ -29,7 +31,7 @@ defmodule SymphonyElixir.ClaudeBackendTest do
       claude_model: "sonnet",
       claude_permission_mode: "acceptEdits",
       claude_turn_timeout_ms: 2_000,
-      claude_read_timeout_ms: 500
+      claude_read_timeout_ms: @test_read_timeout_ms
     )
 
     on_exit(fn ->
@@ -912,7 +914,7 @@ defmodule SymphonyElixir.ClaudeBackendTest do
     end
   end
 
-  defp assert_eventually(fun, attempts \\ 500)
+  defp assert_eventually(fun, attempts \\ @process_stop_attempts)
 
   defp assert_eventually(fun, attempts) when attempts > 0 do
     if fun.() do
