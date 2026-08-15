@@ -3,9 +3,11 @@
 ## Purpose
 
 Allow one Symphony orchestrator to dispatch GitHub Project tickets to credential-isolated
-workers owned by different GitHub users. The assignee who moves a ticket to `Ready` selects the
-credential profile. An optional Project single-select field selects Claude or Codex; when the
-field is unset, the profile's configured default applies.
+workers owned by different GitHub users. By default, the assignee who moves a ticket to `Ready`
+selects the credential profile. An optional trusted release actor can instead move an assigned
+ticket to `Ready` without using the worker owner's GitHub credential. An optional Project
+single-select field selects Claude or Codex; when the field is unset, the profile's configured
+default applies.
 
 This routing does not use labels or additional workflow states.
 
@@ -26,6 +28,10 @@ The daily workflow is:
 Symphony resolves the Ready-transition actor to a configured execution profile, confirms that
 the actor is an issue assignee, resolves the backend, and claims the item as `In Progress`.
 
+For an automated release, a configured trusted actor moves the item to `Ready`. Symphony selects
+the only current issue assignee whose login is also a configured execution profile. The trusted
+actor authorizes release; the assigned profile owns the worker and credentials.
+
 ## Configuration
 
 Routing is opt-in and lives under `agent.routing`. Profile keys are normalized GitHub logins.
@@ -36,6 +42,8 @@ agent:
   routing:
     ready_state: Ready
     executor_field: Executor
+    trusted_release_actors:
+      - thor-claw
     profiles:
       afarnham:
         default_backend: codex
@@ -59,6 +67,40 @@ Routing validation requires:
 - a supported `default_backend` for every profile;
 - at least one unique SSH worker host for every profile; and
 - no worker host shared by two profiles.
+
+`trusted_release_actors` is optional. Entries are case-insensitive GitHub logins, normalized to
+lowercase, and must be unique. These actors are release governors, not execution profiles. They do
+not need to be assigned to the issue and do not select a worker by their own identity.
+
+## Add a trusted release actor
+
+Use these steps for each bot, service account, or human governor that may release assigned work:
+
+1. Create or select a dedicated GitHub identity. Give its token only the repository issue and
+   organization Project permissions required to assign the worker owner and move Project Status
+   to `Ready`. Do not give the governor a worker owner's personal token.
+2. Add the normalized GitHub login to `agent.routing.trusted_release_actors`:
+
+   ```yaml
+   agent:
+     routing:
+       trusted_release_actors:
+         - thor-claw
+         - another-governor
+   ```
+
+3. Keep each target issue assigned to exactly one login present under
+   `agent.routing.profiles`. Other assignees are allowed only when they are not configured
+   profiles.
+4. Install or deploy the updated workflow and reload Symphony. A workflow reload applies the new
+   allowlist to future dispatches; it does not change a route already captured by a running job.
+5. Test with a low-risk item: have the new identity move it to `Ready`, then confirm the route
+   records the governor as `ready_actor` and the assigned worker owner as `profile`.
+
+The governor cannot name an arbitrary profile. Symphony derives the worker owner from current
+issue assignment and fails closed when zero or more than one configured profile is assigned. In
+those cases the item remains in `Ready` with a visible routing error. Leaving `Executor` unset uses
+the assigned profile's default backend; setting `Claude` or `Codex` changes only the backend.
 
 ## Normalized tracker data
 
@@ -85,7 +127,7 @@ A route contains:
 - the profile's eligible worker hosts; and
 - the Ready event identity used to authorize the route.
 
-Routing succeeds only if:
+Direct human routing succeeds only if:
 
 - the Ready actor is present and is not an automated transition;
 - the Ready actor names a configured profile;
@@ -100,6 +142,16 @@ owns the run. A user who is not assigned cannot route the issue merely by moving
 Unknown users, missing history, unsupported Executor values, automation, and assignee mismatches
 leave the item in Ready. Symphony records a visible routing reason and never falls back to another
 profile or the legacy global backend.
+
+Trusted release routing succeeds only if:
+
+- the Ready actor is present in `trusted_release_actors`;
+- exactly one current issue assignee names a configured profile; and
+- the Executor value is unset, `Claude`, or `Codex`.
+
+GitHub may classify a trusted actor's Ready transition as automated. The explicit allowlist is the
+authorization check for that path. Automated transitions from identities not on the allowlist
+remain rejected.
 
 ## Dispatch and lifecycle invariants
 
@@ -181,6 +233,8 @@ Coverage includes:
 - Ready event pagination and Project filtering;
 - default and overridden backend selection;
 - multiple assignees resolved by the Ready actor;
+- trusted release selection of the only assigned configured profile;
+- trusted release rejection with zero or multiple assigned configured profiles;
 - missing, unknown, automated, and unassigned actors;
 - route snapshot preservation across retries, blocking, and reloads;
 - worker capacity constrained to the selected profile;

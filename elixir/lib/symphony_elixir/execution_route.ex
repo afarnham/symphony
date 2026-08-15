@@ -35,13 +35,24 @@ defmodule SymphonyElixir.ExecutionRoute do
     actor = normalize_login(issue.ready_actor_id)
     assignees = MapSet.new(issue.assignee_ids, &normalize_login/1)
 
-    with :ok <- validate_ready_actor(actor, issue.ready_actor_automated),
-         true <- MapSet.member?(assignees, actor) or {:error, {:ready_actor_not_assigned, actor}},
-         {:ok, profile} <- fetch_profile(routing.profiles, actor),
+    trusted_release_actors =
+      routing
+      |> Map.get(:trusted_release_actors, [])
+      |> MapSet.new(&normalize_login/1)
+
+    with :ok <- validate_ready_actor_present(actor),
+         {:ok, profile_login, profile} <-
+           resolve_profile(
+             actor,
+             issue.ready_actor_automated,
+             assignees,
+             routing.profiles,
+             trusted_release_actors
+           ),
          {:ok, backend} <- selected_backend(issue.requested_backend, profile) do
       {:ok,
        %__MODULE__{
-         profile: actor,
+         profile: profile_login,
          ready_actor: actor,
          backend: backend,
          worker_hosts: Map.fetch!(profile, "worker_hosts")
@@ -51,7 +62,44 @@ defmodule SymphonyElixir.ExecutionRoute do
 
   def resolve(%Issue{}, _settings), do: {:error, :invalid_agent_routing_settings}
 
-  defp validate_ready_actor("", _automated), do: {:error, :ready_actor_missing}
+  defp validate_ready_actor_present(""), do: {:error, :ready_actor_missing}
+  defp validate_ready_actor_present(_actor), do: :ok
+
+  defp resolve_profile(actor, automated, assignees, profiles, trusted_release_actors) do
+    if MapSet.member?(trusted_release_actors, actor) do
+      fetch_trusted_release_profile(actor, assignees, profiles)
+    else
+      fetch_ready_actor_profile(actor, automated, assignees, profiles)
+    end
+  end
+
+  defp fetch_ready_actor_profile(actor, automated, assignees, profiles) do
+    with :ok <- validate_ready_actor(actor, automated),
+         true <- MapSet.member?(assignees, actor) or {:error, {:ready_actor_not_assigned, actor}},
+         {:ok, profile} <- fetch_profile(profiles, actor) do
+      {:ok, actor, profile}
+    end
+  end
+
+  defp fetch_trusted_release_profile(actor, assignees, profiles) do
+    candidates =
+      assignees
+      |> MapSet.to_list()
+      |> Enum.filter(&Map.has_key?(profiles, &1))
+      |> Enum.sort()
+
+    case candidates do
+      [] ->
+        {:error, {:trusted_release_profile_not_found, actor}}
+
+      [profile_login] ->
+        {:ok, profile_login, Map.fetch!(profiles, profile_login)}
+
+      profile_logins ->
+        {:error, {:trusted_release_profile_ambiguous, actor, profile_logins}}
+    end
+  end
+
   defp validate_ready_actor(_actor, true), do: {:error, :ready_transition_automated}
   defp validate_ready_actor(_actor, false), do: :ok
   defp validate_ready_actor(_actor, _automated), do: {:error, :ready_transition_automation_unknown}

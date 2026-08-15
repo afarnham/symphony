@@ -331,11 +331,20 @@ router changes landed in app-tastemap PRs #587 and #591. The mandatory router is
 deployment dependency: without matching app-side support, claimed tickets block before any
 repository work.
 
-The workflow maps `afarnham` to a Codex-default worker and `karbas` to a Claude-default worker. The
-person moving an item to `Ready` must also be an issue assignee. Leaving Executor blank uses that
-person's default; setting it overrides the backend without changing whose credentials run the
-ticket. Do not put GitHub credentials in the clone URL. The worker entrypoint supplies the shared
-repository credential to Git's credential helper.
+The workflow maps `afarnham` to a Codex-default worker and `karbas` to a Claude-default worker. A
+worker owner can assign and move their own item to `Ready`. The workflow also lists `thor-claw` as
+a trusted release actor: it can move an item to `Ready` with its own token, and Symphony routes the
+item to the only assigned configured profile. The governor does not need the worker owner's token.
+Leaving Executor blank uses the selected profile's default; setting it overrides the backend
+without changing whose credentials run the ticket. Do not put GitHub credentials in the clone
+URL. The worker entrypoint supplies the shared repository credential to Git's credential helper.
+
+To add another governor, add its normalized GitHub login under
+`agent.routing.trusted_release_actors`, install the changed workflow, and reload Symphony. Give the
+governor only the issue and Project permissions needed to assign a worker owner and move Status.
+Each released issue must have exactly one configured profile among its assignees; otherwise
+Symphony leaves it in `Ready`. Follow the complete checklist in
+[`assignee-executor-routing.md`](assignee-executor-routing.md#add-a-trusted-release-actor).
 
 The workflow sets Claude's `permission_mode` to `bypassPermissions` for unattended work. That is an
 explicit trust decision: the agent can run commands and change files without an interactive
@@ -573,18 +582,21 @@ issues in the configured repository:
 4. Repeat with an issue assigned and readied by `karbas`; confirm Claude starts on
    `agent-worker-karbas`. Then set Executor to the non-default backend and confirm only the backend,
    not the worker profile, changes.
-5. Confirm the agent can clone, create a branch, push, and open a pull request using only the worker
+5. Assign an issue only to `afarnham`, then have `thor-claw` move it to `Ready` with its own token.
+   Confirm the route records `ready_actor=thor-claw` and `profile=afarnham`. Repeat with zero and
+   two configured-profile assignees and confirm both remain in `Ready` with routing errors.
+6. Confirm the agent can clone, create a branch, push, and open a pull request using only the worker
    credential.
-6. Confirm tracker comments and Status transitions succeed through the session-scoped tools.
-7. Use a generic issue and confirm successful work moves to `In Review`.
-8. Use a dummy `wine dive` issue in the new ticket format. Confirm the router comments its durable
+7. Confirm tracker comments and Status transitions succeed through the session-scoped tools.
+8. Use a generic issue and confirm successful work moves to `In Review`.
+9. Use a dummy `wine dive` issue in the new ticket format. Confirm the router comments its durable
    run receipt, the graph starts or resumes that run, and the Project item remains `In Progress`
    rather than moving to `In Review` after an intermediate band.
-9. Use a malformed `wine dive` issue. Confirm routing stops before generic implementation and the
+10. Use a malformed `wine dive` issue. Confirm routing stops before generic implementation and the
    item moves to `Blocked`; then correct the ticket and move it back to `Ready` to verify resume.
-10. For the generic blocker path, use a test requiring unavailable human input. Confirm it moves to
+11. For the generic blocker path, use a test requiring unavailable human input. Confirm it moves to
    `Blocked`, then resolve the input and move it back to `Ready`.
-11. Inspect logs for accidental GitHub, Claude, Codex, SSH, or MCP token output before accepting the
+12. Inspect logs for accidental GitHub, Claude, Codex, SSH, or MCP token output before accepting the
    deployment.
 
 Do not retire the prior deployment until this smoke test passes on the VM.

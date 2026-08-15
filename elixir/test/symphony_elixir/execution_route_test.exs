@@ -34,6 +34,20 @@ defmodule SymphonyElixir.ExecutionRouteTest do
             }} = ExecutionRoute.resolve(issue, routed_settings())
   end
 
+  test "existing routing maps without a trusted actor list keep direct human routing" do
+    issue = %Issue{
+      assignee_ids: ["afarnham"],
+      ready_actor_id: "afarnham",
+      ready_actor_automated: false
+    }
+
+    settings =
+      update_in(routed_settings(), [:agent, :routing], &Map.delete(&1, :trusted_release_actors))
+
+    assert {:ok, %ExecutionRoute{profile: "afarnham", ready_actor: "afarnham"}} =
+             ExecutionRoute.resolve(issue, settings)
+  end
+
   test "an explicit executor overrides the profile default" do
     issue = %Issue{
       assignee_ids: ["afarnham"],
@@ -49,6 +63,64 @@ defmodule SymphonyElixir.ExecutionRouteTest do
 
     assert {:ok, %ExecutionRoute{backend: "codex"}} =
              ExecutionRoute.resolve(%{issue | requested_backend: ""}, routed_settings())
+  end
+
+  test "a trusted release actor routes to the only assigned configured profile" do
+    issue = %Issue{
+      assignee_ids: ["reviewer", "AFarnham"],
+      ready_actor_id: "Thor-Claw",
+      ready_actor_automated: true
+    }
+
+    assert {:ok,
+            %ExecutionRoute{
+              profile: "afarnham",
+              ready_actor: "thor-claw",
+              backend: "codex",
+              worker_hosts: ["worker@aaron"]
+            }} = ExecutionRoute.resolve(issue, routed_settings(["thor-claw"]))
+  end
+
+  test "a trusted release actor preserves the Executor override" do
+    issue = %Issue{
+      assignee_ids: ["afarnham"],
+      ready_actor_id: "thor-claw",
+      ready_actor_automated: true,
+      requested_backend: "claude"
+    }
+
+    assert {:ok, %ExecutionRoute{profile: "afarnham", backend: "claude"}} =
+             ExecutionRoute.resolve(issue, routed_settings(["thor-claw"]))
+  end
+
+  test "trusted release routing fails closed without exactly one assigned profile" do
+    base = %Issue{
+      ready_actor_id: "thor-claw",
+      ready_actor_automated: true
+    }
+
+    assert {:error, {:trusted_release_profile_not_found, "thor-claw"}} =
+             ExecutionRoute.resolve(
+               %{base | assignee_ids: ["reviewer"]},
+               routed_settings(["thor-claw"])
+             )
+
+    assert {:error, {:trusted_release_profile_ambiguous, "thor-claw", ["afarnham", "karbas"]}} =
+             ExecutionRoute.resolve(
+               %{base | assignee_ids: ["Karbas", "reviewer", "AFarnham"]},
+               routed_settings(["thor-claw"])
+             )
+  end
+
+  test "an automated actor that is not trusted remains rejected" do
+    issue = %Issue{
+      assignee_ids: ["afarnham"],
+      ready_actor_id: "other-bot",
+      ready_actor_automated: true
+    }
+
+    assert {:error, :ready_transition_automated} =
+             ExecutionRoute.resolve(issue, routed_settings(["thor-claw"]))
   end
 
   test "routing fails closed for missing, automated, unknown, and unassigned actors" do
@@ -87,10 +159,11 @@ defmodule SymphonyElixir.ExecutionRouteTest do
              ExecutionRoute.resolve(base, %{agent: %{routing: %{profiles: nil}}})
   end
 
-  defp routed_settings do
+  defp routed_settings(trusted_release_actors \\ []) do
     %{
       agent: %{
         routing: %{
+          trusted_release_actors: trusted_release_actors,
           profiles: %{
             "afarnham" => %{
               "default_backend" => "codex",
