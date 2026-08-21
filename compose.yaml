@@ -13,6 +13,8 @@ x-agent-worker: &agent-worker
     HOME: /home/worker
     NPM_CONFIG_CACHE: /home/worker/.cache/npm
     PNPM_HOME: /home/worker/.local/share/pnpm
+    SYMPHONY_DIVE_CLAUDE_MODEL: ${SYMPHONY_DIVE_CLAUDE_MODEL:-sonnet}
+    SYMPHONY_DIVE_CODEX_MODEL: ${SYMPHONY_DIVE_CODEX_MODEL:-gpt-5.6}
     XDG_CACHE_HOME: /home/worker/.cache
     XDG_DATA_HOME: /home/worker/.local/share
   pids_limit: ${SYMPHONY_WORKER_PIDS_LIMIT:-512}

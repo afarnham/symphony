@@ -17,7 +17,7 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
     assert get_in(config, ["codex", "approval_policy"]) == "never"
     assert get_in(config, ["agent", "routing", "trusted_release_actors"]) == ["thor-claw"]
 
-    assert prompt =~ "pnpm wine-dive -- route-ticket"
+    assert prompt =~ "pnpm dive-graph -- route-ticket"
     assert prompt =~ "--ticket-file"
     refute prompt =~ "--issue <native_ref.issue_number>"
     assert prompt =~ "tracker_get_issue payload"
@@ -26,6 +26,7 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
     assert prompt =~ "native_ref.project_item_id"
     assert prompt =~ "SYMPHONY_ROUTE=generic"
     assert prompt =~ "SYMPHONY_ROUTE=wine-dive-graph"
+    assert prompt =~ "SYMPHONY_ROUTE=dining-dive-graph"
     assert prompt =~ "must not fall through to generic implementation"
   end
 
@@ -35,7 +36,17 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
     assert prompt =~ "For `SYMPHONY_ROUTE=generic`"
     assert prompt =~ "move the item to `In Review`"
     assert prompt =~ "For `SYMPHONY_ROUTE=wine-dive-graph`"
+    assert prompt =~ "For `SYMPHONY_ROUTE=dining-dive-graph`"
     assert prompt =~ "Keep the Project item `In Progress` between band PRs"
+    assert prompt =~ "pnpm dining-dive -- preflight"
+    assert prompt =~ "pnpm dining-dive-dispatch -- ready --run-dir"
+    assert prompt =~ "pnpm dining-dive-dispatch -- complete --run-dir"
+    assert prompt =~ "run-codex"
+    assert prompt =~ "run-claude"
+    assert prompt =~ "pnpm dining-dive-publish -- record-receipt"
+    assert prompt =~ "requests squash auto-merge"
+    assert prompt =~ "Never invent or estimate token counts"
+    assert prompt =~ "Do not move it to `In Review`"
     assert prompt =~ "move the item to `Done`"
     assert prompt =~ "emit the input-required sentinel"
     assert prompt =~ "<!-- symphony:needs-input -->"

@@ -188,7 +188,11 @@ while a routine reboot can start from the already verified local cache during a 
 Because the reference is digest-pinned, cache reuse cannot silently select a different image.
 
 The environment file contains no secrets, but still keep it root-owned. Record its image digests
-with the change ticket so rollback does not depend on a mutable registry tag. If the project
+and the `SYMPHONY_DIVE_CODEX_MODEL` and `SYMPHONY_DIVE_CLAUDE_MODEL` values in configuration
+management with the change ticket so rollback does not depend on a mutable registry tag. These
+settings are passed only to worker containers and select the bounded dining-graph research model
+that matches the ticket's executor. A new deployment defaults to `gpt-5.6` for Codex and `sonnet` for Claude;
+change either value in `deployment.env` without editing the workflow prompt. If the project
 publishes signatures or provenance, verify them before the pull.
 
 For development only, the checked-in build override can build from the local checkout:
@@ -317,19 +321,19 @@ single-select field named `Executor` with exactly `Claude` and `Codex` options. 
 | `Done` / `Cancelled` | Terminal. |
 
 The app-tastemap workflow installs repository dependencies and then requires every claimed ticket
-to pass through the repository's `pnpm wine-dive -- route-ticket` command before exploration or
-edits. It serializes the normalized `tracker_get_issue` output to a temporary ticket file, avoiding
-a second GitHub issue read with the narrower worker credential. Generic tickets follow the ordinary
-`In Progress` to `In Review` lifecycle. A ticket routed to the wine-dive graph remains `In Progress`
-across its sequential band PRs and moves directly to `Done` only after terminal graph closeout. A
-router error or malformed labeled wine ticket fails closed through the normal `Blocked` flow; it
-never falls through to generic implementation.
+to pass through the repository's neutral `pnpm dive-graph -- route-ticket` command before
+exploration or edits. It serializes the normalized `tracker_get_issue` output to a temporary ticket
+file, avoiding a second GitHub issue read with the narrower worker credential. Generic tickets
+follow the ordinary `In Progress` to `In Review` lifecycle. Tickets routed to the wine- or
+dining-dive graph remain `In Progress` across their sequential band PRs and move directly to `Done`
+only after terminal graph closeout. A router error or malformed labeled dive ticket fails closed
+through the normal `Blocked` flow; it never falls through to generic implementation.
 
 Do not install or restart Symphony with this workflow until app-tastemap's `main` accepts the
-normalized tracker payload in `route-ticket --ticket-file`. The original ticket-format and graph
-router changes landed in app-tastemap PRs #587 and #591. The mandatory router is deliberately a
-deployment dependency: without matching app-side support, claimed tickets block before any
-repository work.
+normalized tracker payload in `dive-graph -- route-ticket --ticket-file`. The original wine ticket
+and graph router changes landed in app-tastemap PRs #587 and #591; the neutral wine/dining router
+and dining runtime landed in PR #608. The mandatory router is deliberately a deployment dependency:
+without matching app-side support, claimed tickets block before any repository work.
 
 The workflow maps `afarnham` to a Codex-default worker and `karbas` to a Claude-default worker. A
 worker owner can assign and move their own item to `Ready`. The workflow also lists `thor-claw` as
