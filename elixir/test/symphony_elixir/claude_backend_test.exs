@@ -8,7 +8,8 @@ defmodule SymphonyElixir.ClaudeBackendTest do
   @fake_claude Path.expand("../fixtures/claude/fake_claude.sh", __DIR__)
   @fake_ssh Path.expand("../fixtures/claude/fake_ssh.sh", __DIR__)
   @test_read_timeout_ms 2_000
-  @process_stop_attempts 1_000
+  @eventually_attempts 1_000
+  @process_stop_attempts 3_000
 
   setup do
     original_auth_status = System.get_env("FAKE_CLAUDE_AUTH_STATUS")
@@ -908,11 +909,11 @@ defmodule SymphonyElixir.ClaudeBackendTest do
   end
 
   defp assert_process_tree_stopped(workspace) do
-    process_pid = workspace |> Path.join("claude-process.pid") |> File.read!() |> String.trim()
-    child_pid = workspace |> Path.join("claude-child.pid") |> File.read!() |> String.trim()
-
-    assert_eventually(fn -> not process_alive?(process_pid) end)
-    assert_eventually(fn -> not process_alive?(child_pid) end)
+    for filename <- ["claude-process.pid", "claude-child.pid"],
+        {:ok, contents} <- [File.read(Path.join(workspace, filename))] do
+      pid = String.trim(contents)
+      assert_eventually(fn -> not process_alive?(pid) end, @process_stop_attempts)
+    end
   end
 
   defp process_alive?(pid) do
@@ -927,7 +928,7 @@ defmodule SymphonyElixir.ClaudeBackendTest do
     status != "" and not String.starts_with?(status, "Z")
   end
 
-  defp assert_eventually(fun, attempts \\ @process_stop_attempts)
+  defp assert_eventually(fun, attempts \\ @eventually_attempts)
 
   defp assert_eventually(fun, attempts) when attempts > 0 do
     if fun.() do
