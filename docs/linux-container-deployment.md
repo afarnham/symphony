@@ -188,7 +188,11 @@ while a routine reboot can start from the already verified local cache during a 
 Because the reference is digest-pinned, cache reuse cannot silently select a different image.
 
 The environment file contains no secrets, but still keep it root-owned. Record its image digests
-with the change ticket so rollback does not depend on a mutable registry tag. If the project
+and the `SYMPHONY_DIVE_CODEX_MODEL` and `SYMPHONY_DIVE_CLAUDE_MODEL` values in configuration
+management with the change ticket so rollback does not depend on a mutable registry tag. These
+settings are passed only to worker containers and select the bounded dining-graph research model
+that matches the ticket's executor. A new deployment defaults to `gpt-5.6` for Codex and `sonnet` for Claude;
+change either value in `deployment.env` without editing the workflow prompt. If the project
 publishes signatures or provenance, verify them before the pull.
 
 For development only, the checked-in build override can build from the local checkout:
