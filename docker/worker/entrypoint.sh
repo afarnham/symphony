@@ -55,7 +55,7 @@ case "${1:-serve}" in
   serve)
     shift || true
     dive_claude_model=${SYMPHONY_DIVE_CLAUDE_MODEL:-sonnet}
-    dive_codex_model=${SYMPHONY_DIVE_CODEX_MODEL:-gpt-5.6}
+    dive_codex_model=${SYMPHONY_DIVE_CODEX_MODEL:-gpt-5.6-terra}
     validate_model_name "$dive_claude_model" SYMPHONY_DIVE_CLAUDE_MODEL
     validate_model_name "$dive_codex_model" SYMPHONY_DIVE_CODEX_MODEL
     session_environment="GH_CONFIG_DIR=/tmp/symphony-gh NPM_CONFIG_CACHE=/home/worker/.cache/npm PNPM_HOME=/home/worker/.local/share/pnpm XDG_CACHE_HOME=/home/worker/.cache XDG_DATA_HOME=/home/worker/.local/share SYMPHONY_DIVE_CLAUDE_MODEL=$dive_claude_model SYMPHONY_DIVE_CODEX_MODEL=$dive_codex_model"

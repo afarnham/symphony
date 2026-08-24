@@ -192,8 +192,10 @@ and the `SYMPHONY_DIVE_CODEX_MODEL` and `SYMPHONY_DIVE_CLAUDE_MODEL` values in c
 management with the change ticket so rollback does not depend on a mutable registry tag. These
 settings are passed only to worker containers and into their SSH agent sessions. They select the
 bounded dining-graph research model that matches the ticket's executor. A new deployment defaults
-to `gpt-5.6` for Codex and `sonnet` for Claude;
-change either value in `deployment.env` without editing the workflow prompt. If the project
+to `gpt-5.6-terra` for Codex and `sonnet` for Claude. Use a Codex model identifier supported by
+the worker account; the generic `gpt-5.6` API model name is not valid for a ChatGPT-authenticated
+Codex CLI session. You can change either value in `deployment.env` without editing the workflow
+prompt. If the project
 publishes signatures or provenance, verify them before the pull.
 
 For development only, the checked-in build override can build from the local checkout:

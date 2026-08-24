@@ -69,6 +69,16 @@ compose() {
       "$@"
 }
 
+SYMPHONY_DIVE_CODEX_MODEL= \
+SYMPHONY_SECRETS_DIR="$secrets_dir" \
+SYMPHONY_WORKFLOW_FILE="$repo_root/docker/tests/WORKFLOW.md" \
+  docker compose \
+    --project-directory "$repo_root" \
+    -f "$repo_root/compose.yaml" \
+    -f "$repo_root/compose.build.yaml" \
+    -p "${project}-defaults" \
+    config | grep -F 'SYMPHONY_DIVE_CODEX_MODEL: gpt-5.6-terra' >/dev/null
+
 compose config >"$test_root/rendered-compose.yaml"
 if grep -F "$github_project_token" "$test_root/rendered-compose.yaml" >/dev/null || \
    grep -F "$github_worker_token" "$test_root/rendered-compose.yaml" >/dev/null; then
