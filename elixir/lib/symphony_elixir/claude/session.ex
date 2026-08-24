@@ -69,6 +69,7 @@ defmodule SymphonyElixir.Claude.Session do
   @max_stderr_bytes 8_192
   @remote_stage_timeout_ms 10_000
   @default_remote_port_attempts 5
+  @local_port_stop_attempts 100
 
   @type mcp_options :: %{
           optional(:config) => String.t(),
@@ -793,7 +794,7 @@ defmodule SymphonyElixir.Claude.Session do
 
   defp fail_active(%{active: active} = state, reason) do
     cancel_timers(active)
-    close_port(active.port)
+    stop_port(active.port, state.worker_host, active.parser.metadata)
 
     emit_event(
       active.on_event,
@@ -816,7 +817,7 @@ defmodule SymphonyElixir.Claude.Session do
 
   defp cancel_active(%{active: active} = state, reason, opts) do
     cancel_timers(active)
-    close_port(active.port)
+    stop_port(active.port, state.worker_host, active.parser.metadata)
 
     if Keyword.get(opts, :reply, true) do
       GenServer.reply(active.from, {:error, reason})
@@ -856,6 +857,28 @@ defmodule SymphonyElixir.Claude.Session do
 
     :ok
   end
+
+  defp stop_port(port, nil, %{os_pid: os_pid}) when is_binary(os_pid) do
+    if Port.info(port) do
+      _ = System.cmd("kill", ["-TERM", os_pid], stderr_to_stdout: true)
+      wait_for_port_exit(port, @local_port_stop_attempts)
+    end
+
+    close_port(port)
+  end
+
+  defp stop_port(port, _worker_host, _metadata), do: close_port(port)
+
+  defp wait_for_port_exit(port, attempts) when attempts > 0 do
+    if Port.info(port) do
+      Process.sleep(10)
+      wait_for_port_exit(port, attempts - 1)
+    else
+      :ok
+    end
+  end
+
+  defp wait_for_port_exit(_port, 0), do: :ok
 
   defp cleanup_temp_dir(path) when is_binary(path) do
     _ = File.rm_rf(path)

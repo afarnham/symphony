@@ -459,7 +459,7 @@ defmodule SymphonyElixir.ClaudeBackendTest do
 
     assert :ok = Claude.stop_session(session, :cancelled)
     assert {:error, {:claude_cancelled, :cancelled}, _session} = Task.await(task)
-    assert_process_tree_stopped(workspace)
+    assert_process_tree_stopped(workspace, 1)
   end
 
   test "cancellation force-kills a Claude process group that ignores TERM", %{
@@ -473,7 +473,7 @@ defmodule SymphonyElixir.ClaudeBackendTest do
 
     assert :ok = Claude.stop_session(session, :cancelled)
     assert {:error, {:claude_cancelled, :cancelled}, _session} = Task.await(task)
-    assert_process_tree_stopped(workspace)
+    assert_process_tree_stopped(workspace, 1)
   end
 
   test "the process probe treats zombie processes as stopped" do
@@ -908,11 +908,11 @@ defmodule SymphonyElixir.ClaudeBackendTest do
     refute File.exists?(marker)
   end
 
-  defp assert_process_tree_stopped(workspace) do
+  defp assert_process_tree_stopped(workspace, attempts \\ @process_stop_attempts) do
     for filename <- ["claude-process.pid", "claude-child.pid"],
         {:ok, contents} <- [File.read(Path.join(workspace, filename))] do
       pid = String.trim(contents)
-      assert_eventually(fn -> not process_alive?(pid) end, @process_stop_attempts)
+      assert_eventually(fn -> not process_alive?(pid) end, attempts)
     end
   end
 
