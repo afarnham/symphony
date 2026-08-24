@@ -3,6 +3,8 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 project="symphony-container-smoke-$$"
+dive_claude_model="smoke-claude-model"
+dive_codex_model="smoke-codex-model"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/symphony-container-smoke.XXXXXX")
 secrets_dir="$test_root/secrets"
 mkdir -p "$secrets_dir"
@@ -55,6 +57,8 @@ as_root chown 10001:10001 "$secrets_dir"/*
 as_root chmod 0400 "$secrets_dir"/*
 
 compose() {
+  SYMPHONY_DIVE_CLAUDE_MODEL="$dive_claude_model" \
+  SYMPHONY_DIVE_CODEX_MODEL="$dive_codex_model" \
   SYMPHONY_SECRETS_DIR="$secrets_dir" \
   SYMPHONY_WORKFLOW_FILE="$repo_root/docker/tests/WORKFLOW.md" \
     docker compose \
@@ -82,7 +86,7 @@ curl --fail --silent --show-error --max-time 5 \
 [ "$(compose exec -T agent-worker-karbas id -u)" = "10001" ]
 
 compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
-  'test "$PWD" = /workspaces && test "$GH_CONFIG_DIR" = /tmp/symphony-gh && test "$XDG_CACHE_HOME" = /home/worker/.cache && test "$NPM_CONFIG_CACHE" = /home/worker/.cache/npm'
+  'test "$PWD" = /workspaces && test "$GH_CONFIG_DIR" = /tmp/symphony-gh && test "$XDG_CACHE_HOME" = /home/worker/.cache && test "$NPM_CONFIG_CACHE" = /home/worker/.cache/npm && test "$SYMPHONY_DIVE_CLAUDE_MODEL" = smoke-claude-model && test "$SYMPHONY_DIVE_CODEX_MODEL" = smoke-codex-model'
 compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham 'gh auth token >/dev/null'
 compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'printf "protocol=https\nhost=github.com\n\n" | git credential fill >/dev/null'

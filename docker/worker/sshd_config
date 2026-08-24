@@ -18,7 +18,6 @@ GatewayPorts no
 X11Forwarding no
 PermitTunnel no
 PermitUserEnvironment no
-SetEnv GH_CONFIG_DIR=/tmp/symphony-gh NPM_CONFIG_CACHE=/home/worker/.cache/npm PNPM_HOME=/home/worker/.local/share/pnpm XDG_CACHE_HOME=/home/worker/.cache XDG_DATA_HOME=/home/worker/.local/share
 PrintMotd no
 TCPKeepAlive yes
 ClientAliveInterval 30
