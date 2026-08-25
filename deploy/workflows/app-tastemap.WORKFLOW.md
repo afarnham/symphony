@@ -176,10 +176,16 @@ the sentinel.
      merge. If GitHub still reports the PR open, leave the item `In Progress` and end the turn
      without emitting the blocker sentinel.
    - `finalize_run`: run `pnpm dining-dive-publish -- closeout --run-dir "$DINING_RUN_DIR"
-     --repo-dir . --repo GHW-Consulting/app-tastemap`. Confirm the graph now reports `complete`,
-     then use `tracker_update_state` to move the Project item to `Done`.
-   - `complete`: ensure the issue closeout comment and closed issue are present, then move the
-     Project item to `Done` if needed.
+     --repo-dir . --repo GHW-Consulting/app-tastemap --tracker-managed`. Confirm the graph now
+     reports `complete`. Read `artifacts/closeout.json`, then use the orchestrator tools—not the
+     worker's `gh` credential—for ticket lifecycle: use `github_api` to list the issue comments;
+     if the marker `<!-- dining-dive-closeout:<run-id> -->` is absent, add the standard closeout
+     text plus that marker once with `tracker_add_comment`; use `github_api` to PATCH
+     `/repos/GHW-Consulting/app-tastemap/issues/<issue-number>` with `{"state":"closed"}`; confirm
+     the issue is closed; then use `tracker_update_state` to move the Project item to `Done`.
+   - `complete`: idempotently ensure the marked closeout comment and closed issue are present with
+     the same orchestrator tools, then move the Project item to `Done` if needed. Never grant or
+     require Issues permission on the worker credential for this closeout.
    - `awaiting_band_selection` or `awaiting_approval` in Symphony mode is an invalid checkpoint;
      report it as a blocker instead of supplying a human gate.
    - `blocked`: report the exact checkpoint and required human action, emit the input-required

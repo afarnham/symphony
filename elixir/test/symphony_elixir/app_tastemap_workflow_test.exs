@@ -44,6 +44,10 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
     assert prompt =~ "run-codex"
     assert prompt =~ "run-claude"
     assert prompt =~ "pnpm dining-dive-publish -- record-receipt"
+    assert prompt =~ "--tracker-managed"
+    assert prompt =~ "<!-- dining-dive-closeout:<run-id> -->"
+    assert prompt =~ ~s({"state":"closed"})
+    assert prompt =~ "Issues permission on the worker credential"
     assert prompt =~ "requests squash auto-merge"
     assert prompt =~ "Never invent or estimate token counts"
     assert prompt =~ "Do not move it to `In Review`"
