@@ -332,6 +332,16 @@ dining-dive graph remain `In Progress` across their sequential band PRs and move
 only after terminal graph closeout. A router error or malformed labeled dive ticket fails closed
 through the normal `Blocked` flow; it never falls through to generic implementation.
 
+A dining run that is blocked only by `discovery_failed` has one audited recovery path. First, an
+operator repairs the external worker contract. The operator then moves the Project item from
+`Blocked` to `Ready`. The workflow requires a tracked workspace with no changes. It updates the
+workspace to app-tastemap `origin/main`. It archives the failed result and receipt with
+`reopen-discovery`. The run then resumes at `discovery`.
+
+Other block reasons require a separate human resolution and fail closed. Install the current
+app-tastemap workflow before you release such a recovery. Symphony reloads a valid changed
+`WORKFLOW.md` without a service restart.
+
 Do not install or restart Symphony with this workflow until app-tastemap's `main` accepts the
 normalized tracker payload in `dive-graph -- route-ticket --ticket-file`. The original wine ticket
 and graph router changes landed in app-tastemap PRs #587 and #591; the neutral wine/dining router
