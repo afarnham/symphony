@@ -188,8 +188,27 @@ the sentinel.
      require Issues permission on the worker credential for this closeout.
    - `awaiting_band_selection` or `awaiting_approval` in Symphony mode is an invalid checkpoint;
      report it as a blocker instead of supplying a human gate.
-   - `blocked`: report the exact checkpoint and required human action, emit the input-required
-     sentinel, and stop.
+   - `blocked`: if `discovery_failed` is the sole graph failure and this claim follows a human
+     return from `Blocked` to `Ready`, first require a clean tracked worktree with `git diff
+     --quiet` and `git diff --cached --quiet`. Update the existing workspace before recovery:
+
+     ```sh
+     if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+       git fetch --unshallow origin main
+     else
+       git fetch origin main
+     fi
+     git merge --ff-only origin/main
+     pnpm install --frozen-lockfile
+     pnpm dining-dive -- reopen-discovery --id "$DINING_DIVE_RUN_ID" \
+       --reason "The external discovery worker contract was repaired and deployed."
+     pnpm dining-dive -- status --id "$DINING_DIVE_RUN_ID"
+     ```
+
+     Confirm that the graph reports `discovery`, then end the turn without the input-required
+     sentinel. The recovery command archives the failed discovery artifact and receipt. It must
+     fail closed if another block reason is present. For every other blocked checkpoint, report
+     the exact checkpoint and required human action, emit the input-required sentinel, and stop.
 
    Keep the Project item `In Progress` through discovery, every restaurant task, every band PR,
    and every inter-band merge. Do not move it to `In Review`. Only terminal graph closeout moves it
