@@ -188,8 +188,9 @@ the sentinel.
      require Issues permission on the worker credential for this closeout.
    - `awaiting_band_selection` or `awaiting_approval` in Symphony mode is an invalid checkpoint;
      report it as a blocker instead of supplying a human gate.
-   - `blocked`: if `discovery_failed` is the sole graph failure and this claim follows a human
-     return from `Blocked` to `Ready`, first require a clean tracked worktree with `git diff
+   - `blocked`: if `discovery_failed` is the sole graph failure, treat this eligible claim as the
+     recovery authorization. A person already returned the item from `Blocked` to `Ready`; do not
+     ask for a separate confirmation. First require a clean tracked worktree with `git diff
      --quiet` and `git diff --cached --quiet`. Update the existing workspace before recovery:
 
      ```sh

@@ -339,8 +339,16 @@ workspace to app-tastemap `origin/main`. It archives the failed result and recei
 `reopen-discovery`. The run then resumes at `discovery`.
 
 Other block reasons require a separate human resolution and fail closed. Install the current
-app-tastemap workflow before you release such a recovery. Symphony reloads a valid changed
-`WORKFLOW.md` without a service restart.
+app-tastemap workflow before you release such a recovery. The `Ready` release is the recovery
+authorization. The agent must not ask for a second confirmation.
+
+The container uses a read-only file bind mount for `WORKFLOW.md`. An atomic host-file replacement
+can leave the running container on the old file inode. After you replace the host workflow, restart
+the stack to remount the file:
+
+```bash
+sudo systemctl restart symphony
+```
 
 Do not install or restart Symphony with this workflow until app-tastemap's `main` accepts the
 normalized tracker payload in `dive-graph -- route-ticket --ticket-file`. The original wine ticket
