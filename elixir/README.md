@@ -215,6 +215,12 @@ codex:
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+  `GET /api/v1/rate_limits?profile=<login>` reads fresh Codex quota from that profile's
+  first configured worker. It works while idle and after a restart. It creates no thread,
+  workspace, or model turn. The request has a ten-second maximum duration and returns 503
+  when quota is unavailable. With routing disabled, omit `profile` to use the default worker.
+  Intake governors must use this endpoint, since `/api/v1/state` contains only the last
+  quota event from an agent and can be empty or stale.
 
 ### GitHub Project + Claude setup
 
