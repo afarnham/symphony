@@ -6,12 +6,47 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
+  alias SymphonyElixir.{Codex.AppServer, Config}
   alias SymphonyElixirWeb.{Endpoint, Presenter}
 
   @spec state(Conn.t(), map()) :: Conn.t()
   def state(conn, _params) do
     json(conn, Presenter.state_payload(orchestrator(), snapshot_timeout_ms()))
   end
+
+  @spec rate_limits(Conn.t(), map()) :: Conn.t()
+  def rate_limits(conn, params) do
+    with {:ok, settings} <- Config.settings(),
+         {:ok, worker_host} <- quota_worker_host(settings, params["profile"]),
+         {:ok, limits} <- AppServer.read_rate_limits(settings: settings, worker_host: worker_host) do
+      conn
+      |> put_resp_header("cache-control", "no-store")
+      |> json(%{
+        profile: params["profile"],
+        generated_at: DateTime.utc_now(),
+        rate_limits: limits
+      })
+    else
+      {:error, :unknown_profile} ->
+        error_response(conn, 400, "unknown_profile", "Select a configured worker profile")
+
+      _ ->
+        error_response(conn, 503, "rate_limits_unavailable", "Fresh Codex quota is unavailable")
+    end
+  end
+
+  defp quota_worker_host(%{agent: %{routing: %{profiles: profiles}}}, profile) do
+    case Map.fetch(profiles, profile) do
+      {:ok, %{"worker_hosts" => [host | _]}} -> {:ok, host}
+      _ -> {:error, :unknown_profile}
+    end
+  end
+
+  defp quota_worker_host(%{agent: %{routing: nil}, worker: %{ssh_hosts: hosts}}, nil) do
+    {:ok, List.first(hosts)}
+  end
+
+  defp quota_worker_host(_, _), do: {:error, :unknown_profile}
 
   @spec issue(Conn.t(), map()) :: Conn.t()
   def issue(conn, %{"issue_identifier" => issue_identifier}) do

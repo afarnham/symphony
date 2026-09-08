@@ -1483,6 +1483,9 @@ Runtime accounting:
 Rate-limit tracking:
 
 - Track the latest rate-limit payload seen in any agent update.
+- An implementation may also expose a bounded, read-only account quota request for a selected
+  worker profile. This request must not create a model turn or depend on a prior issue run.
+  Consumers that gate dispatch on quota must use fresh account data instead of cached agent events.
 - Any human-readable presentation of rate-limit data is implementation-defined.
 
 ### 13.6 Humanized Agent Event Summaries (OPTIONAL)

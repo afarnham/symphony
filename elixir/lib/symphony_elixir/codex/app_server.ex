@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   @thread_start_id 2
   @turn_start_id 3
   @port_line_bytes 1_048_576
+  @rate_limits_id 4
   @max_stream_log_bytes 1_000
   @needs_input_sentinel "<!-- symphony:needs-input -->"
   @type session :: %{
@@ -37,6 +38,57 @@ defmodule SymphonyElixir.Codex.AppServer do
       end
     end
   end
+
+  @doc "Reads account quota without creating a thread, workspace, or model turn."
+  @spec read_rate_limits(keyword()) :: {:ok, map()} | {:error, term()}
+  def read_rate_limits(opts \\ []) do
+    settings = Keyword.get_lazy(opts, :settings, &Config.settings!/0)
+    timeout = min(settings.codex.read_timeout_ms, 10_000)
+
+    task =
+      Task.Supervisor.async_nolink(SymphonyElixir.TaskSupervisor, fn ->
+        do_read_rate_limits(settings, Keyword.get(opts, :worker_host), timeout)
+      end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _ -> {:error, :rate_limits_unavailable}
+    end
+  end
+
+  defp do_read_rate_limits(settings, worker_host, timeout) do
+    binding = DynamicTool.bind()
+    cwd = if is_nil(worker_host), do: System.tmp_dir!(), else: "/tmp"
+
+    with {:ok, port} <- start_port(cwd, worker_host, binding, settings) do
+      try do
+        with :ok <- send_initialize(port, timeout) do
+          send_message(port, %{"method" => "account/rateLimits/read", "id" => @rate_limits_id})
+
+          with {:ok, result} <- await_response(port, @rate_limits_id, timeout) do
+            select_codex_rate_limits(result)
+          end
+        end
+      after
+        stop_port(port)
+      end
+    end
+  end
+
+  defp select_codex_rate_limits(%{"rateLimitsByLimitId" => buckets}) when is_map(buckets) do
+    codex_rate_limits(Map.get(buckets, "codex"))
+  end
+
+  defp select_codex_rate_limits(%{"rateLimits" => limits}), do: codex_rate_limits(limits)
+  defp select_codex_rate_limits(_), do: {:error, :rate_limits_unavailable}
+
+  defp codex_rate_limits(limits) when is_map(limits) and map_size(limits) > 0 do
+    if Map.get(limits, "limitId") in [nil, "codex"],
+      do: {:ok, limits},
+      else: {:error, :rate_limits_unavailable}
+  end
+
+  defp codex_rate_limits(_), do: {:error, :rate_limits_unavailable}
 
   @spec start_session(Path.t(), keyword()) :: {:ok, session()} | {:error, term()}
   def start_session(workspace, opts \\ []) do
