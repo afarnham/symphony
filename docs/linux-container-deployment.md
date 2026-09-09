@@ -562,8 +562,12 @@ sudo systemctl enable --now symphony.service
 The unit is `Type=oneshot` with `RemainAfterExit=yes`. Path conditions require the Compose file,
 deployment environment, and workflow; its preflight rejects missing, empty, or unsafe required
 secret files before Compose runs. `docker compose up --wait` verifies the container health checks
-before systemd marks startup successful. Container restart policies own long-running process
-recovery; systemd owns boot ordering and explicit start/stop operations. The unit stops containers
+before systemd marks startup successful. If startup fails, systemd retries after 30 seconds with
+no start-rate limit. A temporary DNS or network failure during boot can thus recover without an
+operator restart. Failed preflight checks still prevent Compose from running; check the journal
+for repeated configuration or credential errors. An explicit `systemctl stop symphony` cancels
+retries and keeps the stack stopped. Container restart policies own long-running process
+recovery; systemd owns boot ordering, startup retries, and explicit start/stop operations. The unit stops containers
 without deleting containers, networks, volumes, or authentication state. Its post-stop cleanup also
 runs after a failed `compose up --wait`, preventing restart-policy containers from continuing behind
 a failed systemd unit.

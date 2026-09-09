@@ -4,6 +4,7 @@ Documentation=https://github.com/afarnham/symphony/blob/main/docs/linux-containe
 Wants=network-online.target
 After=network-online.target docker.service
 Requires=docker.service
+StartLimitIntervalSec=0
 ConditionPathExists=/opt/symphony/compose.yaml
 ConditionPathExists=/etc/symphony/deployment.env
 ConditionPathExists=/etc/symphony/WORKFLOW.md
@@ -11,6 +12,8 @@ ConditionPathExists=/etc/symphony/WORKFLOW.md
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+Restart=on-failure
+RestartSec=30s
 WorkingDirectory=/opt/symphony
 Environment=COMPOSE_PROJECT_NAME=symphony
 EnvironmentFile=/etc/symphony/deployment.env
