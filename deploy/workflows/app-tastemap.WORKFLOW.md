@@ -90,6 +90,10 @@ the sentinel.
    top-level `issue` object containing `description`, `labels`, and `native_ref`—unchanged to
    `/tmp/symphony-ticket.json`. Do not unwrap or reconstruct the issue, and do not fetch it with
    `gh` or another GitHub API call.
+   Create the file with an actual filesystem write in the worker workspace. Naming its path in
+   a command does not create it. Use a quoted here-document or a JSON writer, then confirm that
+   the file exists and contains the complete `output` object before routing. Keep the write,
+   existence check, and router invocation sequential in the same execution environment.
 2. Route every ticket before doing any other repository work:
 
    ```sh
@@ -99,7 +103,10 @@ the sentinel.
    ```
 
    Substitute the refreshed native values. If `native_ref.project_item_id` is absent, omit that
-   option. Remove the temporary ticket file after the command returns. The command must exit
+   option. If the temporary file is missing, refresh with `tracker_get_issue`, write its new
+   `output` object, and retry routing. A missing agent-created file is recoverable local work,
+   not a request for a human to create a tracker payload. Never invent or reuse a stale payload.
+   Remove the temporary ticket file only after routing succeeds. The command must exit
    successfully and print exactly one recognized route:
    `SYMPHONY_ROUTE=generic`, `SYMPHONY_ROUTE=wine-dive-graph`, or
    `SYMPHONY_ROUTE=dining-dive-graph`. On failure or ambiguous output,
