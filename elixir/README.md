@@ -179,6 +179,9 @@ Notes:
   Optional `trusted_release_actors` lets a listed governor move an item to Ready and routes it to
   the only assigned configured profile; zero or multiple matching profiles fail closed. See
   [the routing contract](../docs/assignee-executor-routing.md).
+  If GitHub omits the Ready timeline event, an unedited release authorization comment can supply
+  the actor. It must bind the current Ready revision, Project item, profile, and backend. The usual
+  actor and assignment checks still apply; see the routing contract for its format and recovery.
 - `agent.max_turns` caps how many back-to-back agent turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue

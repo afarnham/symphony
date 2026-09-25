@@ -123,6 +123,23 @@ defmodule SymphonyElixir.ExecutionRouteTest do
              ExecutionRoute.resolve(issue, routed_settings(["thor-claw"]))
   end
 
+  test "release receipts cannot change the authorized profile or backend" do
+    issue = %Issue{
+      assignee_ids: ["afarnham"],
+      ready_actor_id: "thor-claw",
+      ready_actor_automated: false,
+      release_authorization: %{"profile" => "afarnham", "backend" => "codex"}
+    }
+
+    assert {:ok, %ExecutionRoute{profile: "afarnham", backend: "codex"}} =
+             ExecutionRoute.resolve(issue, routed_settings(["thor-claw"]))
+
+    for receipt <- [%{"profile" => "karbas", "backend" => "codex"}, %{"profile" => "afarnham", "backend" => "claude"}] do
+      assert {:error, :release_authorization_route_mismatch} =
+               ExecutionRoute.resolve(%{issue | release_authorization: receipt}, routed_settings(["thor-claw"]))
+    end
+  end
+
   test "routing fails closed for missing, automated, unknown, and unassigned actors" do
     base = %Issue{assignee_ids: ["afarnham"], ready_actor_automated: false}
 

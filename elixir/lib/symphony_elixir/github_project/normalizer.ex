@@ -89,7 +89,7 @@ defmodule SymphonyElixir.GitHubProject.Normalizer do
 
       issue = %Issue{
         id: Integer.to_string(item_id),
-        native_ref: native_ref(item_id, issue_number, status_option_id, content, context),
+        native_ref: native_ref(item_id, issue_number, status_option_id, content, context, item["node_id"]),
         identifier: "GH-#{issue_number}",
         title: content["title"],
         description: content["body"],
@@ -339,11 +339,12 @@ defmodule SymphonyElixir.GitHubProject.Normalizer do
 
   defp repository_from_field(_fields), do: nil
 
-  defp native_ref(item_id, issue_number, status_option_id, content, context) do
+  defp native_ref(item_id, issue_number, status_option_id, content, context, item_node_id) do
     %{
       "project_id" => context.project_id,
       "project_number" => context.project_number,
       "project_item_id" => item_id,
+      "project_item_node_id" => item_node_id,
       "status_field_id" => context.status.field_id,
       "status_option_id" => status_option_id,
       "repository" => context.repository,

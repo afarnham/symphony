@@ -110,6 +110,7 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
                "issue_number" => 141,
                "project_id" => 901,
                "project_item_id" => 41,
+               "project_item_node_id" => "PVTI_41",
                "project_number" => 12,
                "repository" => "GHW-Consulting/app-tastemap",
                "status_field_id" => 7,
@@ -505,10 +506,87 @@ defmodule SymphonyElixir.GitHubProject.ClientTest do
                        }}
     end
 
+    test "recovers a missing Ready event through the client and execution route boundary" do
+      receipt = %{
+        "version" => 1,
+        "project_item_id" => "PVTI_41",
+        "ready_updated_at" => "2026-09-25T15:30:46Z",
+        "profile" => "octocat",
+        "backend" => "codex"
+      }
+
+      request_fun = fn
+        "GET", _path, _params, nil, _settings ->
+          ok_response(%{"value" => raw_item(41, "Ready")})
+
+        "POST", "/graphql", %{}, %{"variables" => %{"itemId" => "PVTI_41"}}, _settings ->
+          ok_response(%{
+            "data" => %{
+              "issue" => %{
+                "comments" => %{
+                  "nodes" => [
+                    %{
+                      "id" => "IC_receipt",
+                      "body" => "Symphony release authorization\n\n```json\n" <> Jason.encode!(receipt) <> "\n```",
+                      "createdAt" => "2026-09-25T15:31:00Z",
+                      "lastEditedAt" => nil,
+                      "isMinimized" => false,
+                      "author" => %{"login" => "thor-claw", "__typename" => "User"}
+                    }
+                  ],
+                  "pageInfo" => %{"hasPreviousPage" => false}
+                }
+              },
+              "item" => %{
+                "id" => "PVTI_41",
+                "project" => %{"id" => "PVT_PROJECT"},
+                "content" => %{"id" => "I_141"},
+                "fieldValueByName" => %{"name" => "Ready", "updatedAt" => "2026-09-25T15:30:46Z"}
+              }
+            }
+          })
+
+        "POST", "/graphql", %{}, _body, _settings ->
+          routing_response([], false, nil)
+      end
+
+      assert {:ok, [issue]} =
+               Client.fetch_issues_by_ids(["41"], tracker_settings(),
+                 snapshot: Map.put(routing_snapshot(), :routing_authorized_actors, ["thor-claw"]),
+                 include_routing: true,
+                 request_fun: request_fun
+               )
+
+      settings = %{
+        agent: %{
+          routing: %{
+            trusted_release_actors: ["thor-claw"],
+            profiles: %{"octocat" => %{"default_backend" => "codex", "worker_hosts" => ["worker@octocat"]}}
+          }
+        }
+      }
+
+      assert {:ok, %{profile: "octocat", ready_actor: "thor-claw", worker_hosts: ["worker@octocat"]}} =
+               SymphonyElixir.ExecutionRoute.resolve(issue, settings)
+    end
+
     test "fails closed when no matching Ready transition exists" do
       request_fun = fn
         "GET", _path, _params, nil, _settings ->
           ok_response(%{"value" => raw_item(41, "Ready")})
+
+        "POST", "/graphql", %{}, %{"variables" => %{"itemId" => "PVTI_41"}}, _settings ->
+          ok_response(%{
+            "data" => %{
+              "issue" => %{"comments" => %{"nodes" => [], "pageInfo" => %{"hasPreviousPage" => false}}},
+              "item" => %{
+                "id" => "PVTI_41",
+                "project" => %{"id" => "PVT_PROJECT"},
+                "content" => %{"id" => "I_141"},
+                "fieldValueByName" => %{"name" => "Ready", "updatedAt" => "2026-09-25T15:30:46Z"}
+              }
+            }
+          })
 
         "POST", "/graphql", %{}, _body, _settings ->
           routing_response([], false, nil)

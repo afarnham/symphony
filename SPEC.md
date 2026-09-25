@@ -486,8 +486,13 @@ Fields:
   - `profiles` maps normalized GitHub logins to `default_backend` and an exclusive, non-empty
     `worker_hosts` list.
   - The Ready-transition actor MUST be a current issue assignee, MUST name a configured profile,
-    and MUST not be an automated transition. Routing fails closed when the actor or history cannot
-    be established.
+    and MUST not be an automated transition. A configured `trusted_release_actors` entry may
+    instead authorize the only currently assigned configured profile.
+  - When GitHub omits the Ready event, an unedited release authorization comment may establish the
+    actor. Its GitHub author must pass the same actor checks. The record must bind the Project item,
+    exact Ready field revision, profile, and backend. A new Ready revision invalidates the record.
+    On restart, an In Progress claim may retain it when the claim timestamp follows its creation.
+    API errors, invalid event actors, and missing valid authorization MUST fail closed.
   - A blank Executor value uses the actor profile's default. An explicit value overrides the
     backend but never the credential profile.
   - The resolved profile, backend, eligible hosts, and selected host MUST remain immutable across

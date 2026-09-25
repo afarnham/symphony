@@ -49,7 +49,8 @@ defmodule SymphonyElixir.ExecutionRoute do
              routing.profiles,
              trusted_release_actors
            ),
-         {:ok, backend} <- selected_backend(issue.requested_backend, profile) do
+         {:ok, backend} <- selected_backend(issue.requested_backend, profile),
+         :ok <- validate_release_authorization(issue.release_authorization, profile_login, backend) do
       {:ok,
        %__MODULE__{
          profile: profile_login,
@@ -64,6 +65,14 @@ defmodule SymphonyElixir.ExecutionRoute do
 
   defp validate_ready_actor_present(""), do: {:error, :ready_actor_missing}
   defp validate_ready_actor_present(_actor), do: :ok
+
+  defp validate_release_authorization(nil, _profile, _backend), do: :ok
+
+  defp validate_release_authorization(%{"profile" => profile, "backend" => backend}, profile, backend),
+    do: :ok
+
+  defp validate_release_authorization(_authorization, _profile, _backend),
+    do: {:error, :release_authorization_route_mismatch}
 
   defp resolve_profile(actor, automated, assignees, profiles, trusted_release_actors) do
     if MapSet.member?(trusted_release_actors, actor) do

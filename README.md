@@ -4,6 +4,9 @@ Symphony turns project work into isolated, autonomous implementation runs, allow
 work instead of supervising coding agents. This fork can schedule GitHub Project items by their
 project Status and run either Codex or Claude Code locally or on SSH workers.
 
+If GitHub omits a Ready history event, a verified release authorization can recover
+the assigned execution route. See the [routing contract](docs/assignee-executor-routing.md).
+
 The observability API can read fresh Codex account quota from a configured worker without
 starting an issue. This lets intake governors check budget after a coordinator restart.
 See the [Elixir API documentation](elixir/README.md) for the quota endpoint.

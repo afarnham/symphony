@@ -112,8 +112,8 @@ The GitHub Project adapter reads:
   destination is `ready_state`.
 
 The status event records its actor and whether GitHub classified it as automated. Event discovery
-pages backward through status-change events and fails closed when the matching event cannot be
-identified.
+pages backward through status-change events. When GitHub omits the Ready event, Symphony can use
+an explicit release authorization comment. Missing history without a valid record fails closed.
 
 Regular polling and running-issue reconciliation do not fetch timeline events. The extra request
 is made only when an issue is being considered for a new dispatch route.
@@ -174,6 +174,44 @@ blocked entries retain the route. Existing runs therefore cannot switch accounts
 After a restart, an active item without captured in-memory state is treated as a new dispatch and
 must resolve from the most recent matching Ready transition. The later Symphony-generated In
 Progress transition does not replace the Ready actor used for ownership.
+
+## Recovery when GitHub omits a Ready event
+
+GitHub can update Project Status without adding a status-change event to the issue timeline.
+Moving the item out of Ready and back does not reliably repair that history. The intake governor
+must write an explicit authorization after it confirms Ready. It uses this exact body format:
+
+````text
+Symphony release authorization
+
+```json
+{
+  "version": 1,
+  "project_item_id": "PVTI_actual_item_node_id",
+  "ready_updated_at": "2026-09-25T15:30:46Z",
+  "profile": "afarnham",
+  "backend": "codex"
+}
+```
+````
+
+Read `ready_updated_at` from the Status field value returned by the Ready mutation. Do not use
+the issue update time or the Project item's update time. For an existing Ready item, read its
+current Status field `updatedAt` and confirm its assignment and Executor before writing the record.
+The normal release actor must author the comment with its own credential.
+
+Symphony accepts a record only when GitHub identifies its author as a configured profile or
+trusted release actor. Edited, minimized, malformed, unrelated, or stale records do not qualify.
+The usual actor and assignment checks still apply. The resolved profile and backend must match
+the record. A Ready item requires an exact field revision match, so a later Ready transition needs
+a new record. A coordinator restart can reuse the record for an In Progress item only when the
+claim's Status timestamp is at or after the comment creation time. Inactive states cannot use it.
+The search is limited to 1,000 comments and runs only when no Ready event exists. GitHub API errors
+and invalid Ready event actors do not trigger the fallback.
+
+The manager writes the record automatically for each new release. If a write fails, its unresolved
+ledger entry prevents a second release. An operator can recover that same item by confirming the
+current Ready revision and writing a new record; do not reset the ledger or bypass worker routing.
 
 ## Worker isolation
 

@@ -178,6 +178,7 @@ defmodule SymphonyElixir.Config do
       tracker.provider
       |> Map.put("executor_field", routing.executor_field)
       |> Map.put("routing_ready_state", routing.ready_state)
+      |> Map.put("routing_authorized_actors", Map.keys(routing.profiles) ++ routing.trusted_release_actors)
 
     %{tracker | provider: provider}
   end
