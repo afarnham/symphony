@@ -10,6 +10,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
 
   alias SymphonyElixir.Config
   alias SymphonyElixir.GitHubProject.Normalizer
+  alias SymphonyElixir.GitHubProject.ReleaseAuthorization
   alias SymphonyElixir.Secret
   alias SymphonyElixir.Tracker.Issue
 
@@ -57,6 +58,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
           required(:status) => Normalizer.status_snapshot(),
           optional(:executor) => Normalizer.executor_snapshot() | nil,
           optional(:routing_ready_state) => String.t() | nil,
+          optional(:routing_authorized_actors) => [String.t()],
           required(:active_states) => MapSet.t(String.t()),
           required(:terminal_states) => MapSet.t(String.t()),
           required(:working_state) => String.t(),
@@ -282,6 +284,7 @@ defmodule SymphonyElixir.GitHubProject.Client do
          status_field: status_field,
          executor_field: executor_field,
          routing_ready_state: routing_ready_state,
+         routing_authorized_actors: Map.get(provider, "routing_authorized_actors", []),
          active_states: MapSet.new(active_states, &normalize_state/1),
          terminal_states: MapSet.new(terminal_states, &normalize_state/1),
          working_state: working_state,
@@ -703,8 +706,16 @@ defmodule SymphonyElixir.GitHubProject.Client do
            ready_actor_automated: event.automated
        }}
     else
-      {:error, _reason} = error -> error
-      _missing -> {:error, :github_project_issue_node_id_missing}
+      {:error, :github_project_ready_transition_not_found} ->
+        ReleaseAuthorization.fetch(issue, snapshot, fn body ->
+          request_body("POST", "/graphql", %{}, body, snapshot, request_fun)
+        end)
+
+      {:error, _reason} = error ->
+        error
+
+      _missing ->
+        {:error, :github_project_issue_node_id_missing}
     end
   end
 
