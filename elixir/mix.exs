@@ -40,6 +40,7 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.TrackerMCP.Router,
           SymphonyElixir.TrackerMCP.Server,
           SymphonyElixir.TrackerToolBroker,
+          SymphonyElixir.TrackerTicketFile,
           SymphonyElixir.LogFile,
           SymphonyElixir.Workspace,
           SymphonyElixirWeb.DashboardLive,

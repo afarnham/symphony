@@ -183,7 +183,11 @@ defmodule SymphonyElixir.AgentRunner do
   defp run_agent_turns(workspace, issue, agent_update_recipient, opts, worker_host, backend, settings) do
     max_turns = Keyword.get(opts, :max_turns, settings.agent.max_turns)
     on_event = agent_event_handler(agent_update_recipient, issue)
-    tool_session = AgentBackend.bind_tracker_tools(issue, settings.tracker)
+
+    tool_session =
+      issue
+      |> AgentBackend.bind_tracker_tools(settings.tracker)
+      |> Map.put(:worker_host, worker_host)
 
     issue_state_fetcher =
       Keyword.get(opts, :issue_state_fetcher, fn issue_ids ->

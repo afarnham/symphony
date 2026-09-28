@@ -10,6 +10,50 @@ defmodule SymphonyElixir.TrackerToolBrokerTest do
   alias SymphonyElixir.TrackerToolBroker
   alias SymphonyElixir.Workflow
 
+  test "ticket files preserve the refreshed payload without model JSON transcription" do
+    issue = %Issue{
+      id: "363",
+      identifier: "GH-363",
+      state: "In Progress",
+      title: "Tel Aviv — Israel",
+      description: "Quotes: \"OCD\"; slash \\; newline\nHebrew: שלום; shell: $(touch nope)",
+      labels: ["dining dive"],
+      native_ref: %{issue_number: 363, project_item_id: "222393341"}
+    }
+
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    binding = %{adapter: Memory, tracker_settings: %{kind: "memory"}, issue: issue, worker_host: nil}
+
+    assert %{"success" => true, "output" => output} =
+             TrackerToolBroker.execute(binding, "tracker_get_issue", %{"write_ticket_file" => true})
+
+    payload = Jason.decode!(output)
+    path = payload["ticket_file"]
+    assert is_binary(path)
+    on_exit(fn -> File.rm_rf(Path.dirname(path)) end)
+    assert Jason.decode!(File.read!(path)) == Map.delete(payload, "ticket_file")
+    assert payload["issue"]["description"] == issue.description
+    assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o600
+    assert Bitwise.band(File.stat!(Path.dirname(path)).mode, 0o777) == 0o700
+
+    assert %{"success" => true, "output" => next_output} =
+             TrackerToolBroker.execute(binding, "tracker_get_issue", %{"write_ticket_file" => true})
+
+    next_path = Jason.decode!(next_output)["ticket_file"]
+    on_exit(fn -> File.rm_rf(Path.dirname(next_path)) end)
+    refute next_path == path
+  end
+
+  test "ticket export requires a session-bound host and rejects invalid arguments" do
+    issue = %Issue{id: "363", identifier: "GH-363", state: "In Progress"}
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    binding = %{adapter: Memory, tracker_settings: %{kind: "memory"}, issue: issue}
+
+    for args <- [%{"write_ticket_file" => true}, %{"write_ticket_file" => "true"}, %{"path" => "/tmp/unsafe"}] do
+      assert %{"success" => false} = TrackerToolBroker.execute(binding, "tracker_get_issue", args)
+    end
+  end
+
   defmodule GenericAdapter do
     @spec fetch_issues_by_ids([String.t()], keyword()) :: {:ok, [Issue.t()]}
     def fetch_issues_by_ids([issue_id], opts) do
@@ -31,6 +75,66 @@ defmodule SymphonyElixir.TrackerToolBrokerTest do
       send(settings.test_pid, {:commented, issue.id, body, settings.marker})
       {:ok, %{"id" => 17}}
     end
+  end
+
+  test "remote ticket export uses only the bound worker and sends JSON over stdin" do
+    root = Path.join(System.tmp_dir!(), "tracker-ticket-ssh-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(root)
+    previous_path = System.fetch_env!("PATH")
+    trace = Path.join(root, "trace")
+    ssh = Path.join(root, "ssh")
+
+    File.write!(ssh, """
+    #!/bin/sh
+    printf '%s\\n' "$*" > '#{trace}'
+    for arg do remote="$arg"; done
+    exec sh -c "$remote"
+    """)
+
+    File.chmod!(ssh, 0o755)
+    System.put_env("PATH", root <> ":" <> previous_path)
+
+    on_exit(fn ->
+      System.put_env("PATH", previous_path)
+      File.rm_rf(root)
+    end)
+
+    issue = %Issue{id: "363", identifier: "GH-363", description: "\"quoted\"\\path\n$(exit 77); שלום"}
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    binding = %{adapter: Memory, tracker_settings: %{kind: "memory"}, issue: issue, worker_host: "worker@bound-host"}
+
+    assert %{"success" => true, "output" => output} =
+             TrackerToolBroker.execute(binding, "tracker_get_issue", %{"write_ticket_file" => true}, ticket_file_host: {:ok, "other-host"})
+
+    payload = Jason.decode!(output)
+    on_exit(fn -> File.rm_rf(Path.dirname(payload["ticket_file"])) end)
+    assert Jason.decode!(File.read!(payload["ticket_file"])) == Map.delete(payload, "ticket_file")
+    assert File.read!(trace) =~ "worker@bound-host"
+    refute File.read!(trace) =~ "other-host"
+    refute File.read!(trace) =~ "quoted"
+
+    File.write!(ssh, "#!/bin/sh\nexit 42\n")
+
+    assert %{"success" => false, "output" => failure} =
+             TrackerToolBroker.execute(binding, "tracker_get_issue", %{"write_ticket_file" => true})
+
+    assert failure =~ "tracker_ticket_file_write_failed"
+    refute Map.has_key?(Jason.decode!(failure), "ticket_file")
+
+    File.write!(ssh, "#!/bin/sh\nprintf '/etc/unsafe\\n'\n")
+
+    assert %{"success" => false, "output" => failure} =
+             TrackerToolBroker.execute(binding, "tracker_get_issue", %{"write_ticket_file" => true})
+
+    assert failure =~ "invalid_tracker_ticket_file_path"
+
+    File.rm!(ssh)
+    System.put_env("PATH", root)
+
+    assert %{"success" => false, "output" => failure} =
+             TrackerToolBroker.execute(binding, "tracker_get_issue", %{"write_ticket_file" => true})
+
+    assert failure =~ "ssh_not_found"
   end
 
   test "bind snapshots the selected adapter, settings, tool specs, and secret names" do
