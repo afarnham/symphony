@@ -7,7 +7,7 @@ defmodule SymphonyElixir.TrackerToolBroker do
   binding keeps one agent session stable across workflow reloads.
   """
 
-  alias SymphonyElixir.{Config, Tracker}
+  alias SymphonyElixir.{Config, Tracker, TrackerTicketFile}
   alias SymphonyElixir.Tracker.Issue
 
   @get_issue_tool "tracker_get_issue"
@@ -17,11 +17,11 @@ defmodule SymphonyElixir.TrackerToolBroker do
   @shared_tool_specs [
     %{
       "name" => @get_issue_tool,
-      "description" => "Refresh the current tracker work item and its scheduler state.",
+      "description" => "Refresh the current tracker work item and its scheduler state. Optionally write its exact JSON payload to a private file on the bound worker and return ticket_file.",
       "inputSchema" => %{
         "type" => "object",
         "additionalProperties" => false,
-        "properties" => %{}
+        "properties" => %{"write_ticket_file" => %{"type" => "boolean"}}
       }
     },
     %{
@@ -55,7 +55,8 @@ defmodule SymphonyElixir.TrackerToolBroker do
           required(:tracker_settings) => map(),
           required(:tool_specs) => [map()],
           required(:secret_environment_names) => [String.t()],
-          optional(:issue) => Issue.t()
+          optional(:issue) => Issue.t(),
+          optional(:worker_host) => String.t() | nil
         }
 
   @doc """
@@ -94,6 +95,7 @@ defmodule SymphonyElixir.TrackerToolBroker do
         opts \\ []
       ) do
     opts = Keyword.put_new(opts, :issue, binding[:issue])
+    opts = Keyword.put(opts, :ticket_file_host, Map.fetch(binding, :worker_host))
 
     case tool do
       @get_issue_tool -> execute_get_issue(adapter, tracker_settings, arguments, opts)
@@ -104,10 +106,11 @@ defmodule SymphonyElixir.TrackerToolBroker do
   end
 
   defp execute_get_issue(adapter, tracker_settings, arguments, opts) do
-    with :ok <- require_object(arguments),
+    with :ok <- require_get_issue_arguments(arguments),
          {:ok, issue} <- bound_issue(opts),
-         {:ok, [refreshed | _rest]} <- fetch_bound_issue(adapter, tracker_settings, issue) do
-      success_response(%{"issue" => issue_payload(refreshed)})
+         {:ok, [refreshed | _rest]} <- fetch_bound_issue(adapter, tracker_settings, issue),
+         {:ok, payload} <- maybe_write_ticket_file(%{"issue" => issue_payload(refreshed)}, arguments, opts) do
+      success_response(payload)
     else
       {:ok, []} -> failure_response(:tracker_issue_not_found)
       {:error, reason} -> failure_response(reason)
@@ -191,8 +194,27 @@ defmodule SymphonyElixir.TrackerToolBroker do
     end
   end
 
-  defp require_object(arguments) when is_map(arguments), do: :ok
-  defp require_object(_arguments), do: {:error, :invalid_tracker_tool_arguments}
+  defp require_get_issue_arguments(arguments) when is_map(arguments) do
+    if Map.keys(arguments) -- ["write_ticket_file"] == [] and is_boolean(Map.get(arguments, "write_ticket_file", false)) do
+      :ok
+    else
+      {:error, :invalid_tracker_tool_arguments}
+    end
+  end
+
+  defp require_get_issue_arguments(_arguments), do: {:error, :invalid_tracker_tool_arguments}
+
+  defp maybe_write_ticket_file(payload, %{"write_ticket_file" => true}, opts) do
+    with {:ok, host} <- Keyword.fetch!(opts, :ticket_file_host),
+         {:ok, path} <- TrackerTicketFile.write(payload, host) do
+      {:ok, Map.put(payload, "ticket_file", path)}
+    else
+      :error -> {:error, :missing_bound_ticket_file_host}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp maybe_write_ticket_file(payload, _arguments, _opts), do: {:ok, payload}
 
   defp allowed_state(tracker_settings, requested_state) do
     allowed_states =

@@ -23,6 +23,9 @@ defmodule SymphonyElixir.AppTastemapWorkflowTest do
     assert prompt =~ "tracker_get_issue payload"
     assert prompt =~ "top-level `issue` object"
     assert prompt =~ "Do not unwrap"
+    assert prompt =~ ~s({"write_ticket_file":true})
+    assert prompt =~ "--ticket-file <ticket_file>"
+    refute prompt =~ "/tmp/symphony-ticket.json"
     assert prompt =~ "native_ref.project_item_id"
     assert prompt =~ "SYMPHONY_ROUTE=generic"
     assert prompt =~ "SYMPHONY_ROUTE=wine-dive-graph"

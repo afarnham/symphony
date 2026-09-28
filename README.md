@@ -4,6 +4,9 @@ Symphony turns project work into isolated, autonomous implementation runs, allow
 work instead of supervising coding agents. This fork can schedule GitHub Project items by their
 project Status and run either Codex or Claude Code locally or on SSH workers.
 
+Tracker refreshes can write their exact JSON payload directly to a private file on the bound
+worker. Repository routers consume that file without asking an agent to copy or escape JSON.
+
 If GitHub omits a Ready history event, a verified release authorization can recover
 the assigned execution route. See the [routing contract](docs/assignee-executor-routing.md).
 

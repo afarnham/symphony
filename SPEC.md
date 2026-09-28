@@ -1800,6 +1800,10 @@ RECOMMENDED additional hardening for ports:
 - Validate presence of secrets without printing them.
 - Execute provider-native tracker tools in the Symphony host process with the configured adapter
   credential.
+- A session-bound tracker refresh may export its normalized issue payload to a private temporary
+  file on the bound worker. Only the payload crosses this boundary, through stdin for SSH workers.
+  The caller must not select a different host or an arbitrary output path. An export failure must
+  not return a usable file receipt. This removes model transcription from machine input handoffs.
 - Do not pass tracker credentials through the coding-agent child environment. Adapters MUST declare
   secret environment names, including supported `_FILE` counterparts, so local and remote
   launchers can remove them from child environments.

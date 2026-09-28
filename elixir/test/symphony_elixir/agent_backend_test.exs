@@ -159,7 +159,8 @@ defmodule SymphonyElixir.AgentBackendTest do
     def validate_host(_settings, _worker_host), do: :ok
 
     @impl true
-    def start_session(_workspace, issue, _tool_session, opts) do
+    def start_session(_workspace, issue, tool_session, opts) do
+      send(Keyword.fetch!(opts, :test_pid), {:fake_backend_tool_host, Map.fetch(tool_session, :worker_host)})
       send(Keyword.fetch!(opts, :test_pid), {:fake_backend_started, issue.id})
       {:ok, %{turn: 0, test_pid: Keyword.fetch!(opts, :test_pid)}}
     end
@@ -432,6 +433,7 @@ defmodule SymphonyElixir.AgentBackendTest do
              )
 
     assert_receive {:fake_backend_started, "issue-fake-backend"}
+    assert_receive {:fake_backend_tool_host, {:ok, nil}}
     assert_receive {:worker_runtime_info, "issue-fake-backend", %{profile: "afarnham", ready_actor: "afarnham", backend: :fake}}
     assert_receive {:fake_backend_turn, 0, 1}
     assert_receive {:fake_backend_turn, 1, 2}

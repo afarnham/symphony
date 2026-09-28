@@ -84,29 +84,27 @@ Whenever these instructions say to emit the input-required sentinel, put the exa
 `<!-- symphony:needs-input -->` on a line by itself in your final response. Do not merely describe
 the sentinel.
 
-1. Use `tracker_get_issue` before any exploration, implementation, or repository edits. Treat its
-   refreshed issue fields and `native_ref` as authoritative. Write the JSON object contained in
-   the tracker tool result's `output` field—the normalized `tracker_get_issue payload` with a
-   top-level `issue` object containing `description`, `labels`, and `native_ref`—unchanged to
-   `/tmp/symphony-ticket.json`. Do not unwrap or reconstruct the issue, and do not fetch it with
-   `gh` or another GitHub API call.
-   Create the file with an actual filesystem write in the worker workspace. Naming its path in
-   a command does not create it. Use a quoted here-document or a JSON writer, then confirm that
-   the file exists and contains the complete `output` object before routing. Keep the write,
-   existence check, and router invocation sequential in the same execution environment.
+1. Call `tracker_get_issue` with `{"write_ticket_file":true}` before any exploration,
+   implementation, or repository edits. Treat its refreshed issue fields and `native_ref` as
+   authoritative. The tool writes the normalized tracker_get_issue payload with its
+   top-level `issue` object directly to a private file on this worker. Use the returned `ticket_file` path.
+   Do not unwrap, reconstruct, or copy the JSON through a shell string. Do not fetch the issue
+   with `gh` or another GitHub API call. If the tool cannot write the file, report that failure
+   and use the blocked-input flow.
 2. Route every ticket before doing any other repository work:
 
    ```sh
    pnpm dive-graph -- route-ticket \
-     --ticket-file /tmp/symphony-ticket.json \
+     --ticket-file <ticket_file> \
      --project-item-id <native_ref.project_item_id>
    ```
 
    Substitute the refreshed native values. If `native_ref.project_item_id` is absent, omit that
-   option. If the temporary file is missing, refresh with `tracker_get_issue`, write its new
-   `output` object, and retry routing. A missing agent-created file is recoverable local work,
-   not a request for a human to create a tracker payload. Never invent or reuse a stale payload.
-   Remove the temporary ticket file only after routing succeeds. The command must exit
+   option. Quote the returned file path. If the file is missing, unreadable, or invalid JSON,
+   refresh with `tracker_get_issue` and `write_ticket_file: true`, then retry once with its new
+   `ticket_file`. This only repairs the transport file; invalid scope, labels, or band policy
+   must still fail closed. Never invent or reuse a stale payload. Remove the temporary ticket
+   file and its empty parent directory after routing succeeds. The command must exit
    successfully and print exactly one recognized route:
    `SYMPHONY_ROUTE=generic`, `SYMPHONY_ROUTE=wine-dive-graph`, or
    `SYMPHONY_ROUTE=dining-dive-graph`. On failure or ambiguous output,

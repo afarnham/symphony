@@ -325,8 +325,12 @@ single-select field named `Executor` with exactly `Claude` and `Codex` options. 
 
 The app-tastemap workflow installs repository dependencies and then requires every claimed ticket
 to pass through the repository's neutral `pnpm dive-graph -- route-ticket` command before
-exploration or edits. It serializes the normalized `tracker_get_issue` output to a temporary ticket
-file, avoiding a second GitHub issue read with the narrower worker credential. Generic tickets
+exploration or edits. It calls `tracker_get_issue` with `write_ticket_file: true`. The tracker
+broker writes the normalized JSON directly to a private temporary file on the bound worker.
+The agent passes the returned `ticket_file` path without copying or escaping JSON. Remote payloads
+travel over SSH stdin. This avoids a second GitHub read with the narrower worker credential.
+A missing or malformed transport file gets one fresh export and retry. Invalid ticket scope,
+labels, and band policy still fail closed. Generic tickets
 follow the ordinary `In Progress` to `In Review` lifecycle. Tickets routed to the wine- or
 dining-dive graph remain `In Progress` across their sequential band PRs and move directly to `Done`
 only after terminal graph closeout. A router error or malformed labeled dive ticket fails closed

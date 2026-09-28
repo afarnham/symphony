@@ -331,6 +331,10 @@ credentials remain only on the orchestrator host.
 - `github_api` remains available for provider-native operations. The provider-neutral
   `tracker_get_issue`, `tracker_add_comment`, and `tracker_update_state` tools should be preferred
   for the current work item.
+- `tracker_get_issue` accepts `write_ticket_file: true` to serialize the refreshed issue directly
+  into a private temporary file on the session's worker. The response adds `ticket_file`; its JSON
+  contains the same top-level `issue` object. Pass that path to a consumer, then remove the file
+  and its empty directory. The caller cannot choose a path or change the bound worker host.
 
 ### Linear adapter profile
 
