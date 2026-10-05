@@ -66,12 +66,17 @@ COPY --chown=root:root healthcheck.sh /usr/local/bin/symphony-worker-healthcheck
 COPY --chown=root:root shell.sh /usr/local/bin/symphony-worker-shell
 COPY --chown=root:root claude-launcher.sh /usr/local/bin/claude
 COPY --chown=root:root codex-launcher.sh /usr/local/bin/codex
+COPY --chown=root:root linkedin-experience-client.mjs /usr/local/libexec/symphony-linkedin-client.mjs
+COPY --chown=root:root linkedin-experience.sh /usr/local/bin/symphony-linkedin-experience
+COPY --chown=root:root linkedin-mcp.sh /usr/local/bin/symphony-linkedin-mcp
 
 RUN chmod 0755 \
       /usr/local/bin/symphony-worker-entrypoint \
       /usr/local/bin/symphony-git-credential \
       /usr/local/bin/symphony-worker-healthcheck \
       /usr/local/bin/symphony-worker-shell \
+      /usr/local/bin/symphony-linkedin-experience \
+      /usr/local/bin/symphony-linkedin-mcp \
       /usr/local/bin/claude \
       /usr/local/bin/codex \
     && usermod --shell /usr/local/bin/symphony-worker-shell worker

@@ -23,6 +23,7 @@ The checked-in operator interface is:
 /etc/symphony/secrets/                     root-only secret source files
 /usr/local/sbin/symphony-admin             secret and login utility
 /etc/systemd/system/symphony.service       boot lifecycle
+/etc/systemd/system/symphony-linkedin-bridge@.service  scoped browser bridge lifecycle
 ```
 
 The deployment is portable across Linux distributions that provide a current rootful Docker
@@ -49,6 +50,7 @@ The stack enforces these boundaries:
 | Worker SSH host private key | No | Yes |
 | Claude/Codex authentication | No | Yes, profile-specific |
 | Workspace volume | No | Yes, profile-specific |
+| LinkedIn bridge token and Unix socket | No | Afarnham only |
 | Docker socket | No | No |
 
 Symphony exposes only a session-scoped tracker MCP token to a running agent. The long-lived Project
@@ -224,9 +226,10 @@ sudo install -o root -g root -m 0755 \
 sudo symphony-admin secrets init
 ```
 
-`secrets init` creates root-owned `/etc/symphony/secrets` with mode `0700` and generates two
+`secrets init` creates root-owned `/etc/symphony/secrets` with mode `0700`. It generates two
 Ed25519 keypairs if they are not already present: a client pair for orchestrator access and a host
-pair that pins the worker's SSH identity. It does not overwrite an existing pair.
+pair that pins the worker's SSH identity. It also generates the scoped LinkedIn bridge token. It
+does not overwrite existing key material or a nonempty bridge token.
 
 Secret source files are owned by UID/GID `10001:10001` with mode `0400`, matching the fixed
 unprivileged user in both images. Local Docker Compose implements file secrets as bind mounts and
@@ -289,6 +292,13 @@ Compose mounts these sources selectively:
   workers.
 - `afarnham_*` model-provider secrets only into `agent-worker-afarnham`, and `karbas_*` secrets
   only into `agent-worker-karbas`.
+- `linkedin_bridge_token` and the scoped host Unix socket only into `agent-worker-afarnham`.
+
+This Thor deployment enables the LinkedIn bridge only for the Afarnham worker. It does not expose
+Chrome or the bridge to the Karbas worker. Install the bridge before starting the Compose stack.
+Follow
+[`linkedin-browser-bridge.md`](linkedin-browser-bridge.md) for its security model, installation,
+live-worker verification, restart procedure, and rollback steps.
 
 The workflow refers to the tracker credential by file URI:
 

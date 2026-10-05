@@ -1,0 +1,35 @@
+[Unit]
+Description=Symphony scoped LinkedIn browser bridge for %i
+Before=symphony.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/symphony/linkedin-bridge
+LoadCredential=auth-token:/etc/symphony/secrets/linkedin_bridge_token
+Environment=SYMPHONY_LINKEDIN_BRIDGE_SOCKET=/run/symphony-linkedin/bridge.sock
+Environment=SYMPHONY_LINKEDIN_CHROME_USER_DATA_DIR=%h/.config/google-chrome
+ExecStart=/usr/bin/node /opt/symphony/linkedin-bridge/src/index.mjs
+Restart=on-failure
+RestartSec=5s
+RuntimeDirectory=symphony-linkedin
+RuntimeDirectoryMode=0711
+RuntimeDirectoryPreserve=yes
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

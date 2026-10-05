@@ -160,6 +160,11 @@ the sentinel.
      --response "$DINING_RUN_DIR/<response-ref>"`, then run
      `pnpm dining-dive-publish -- record-receipt --run-dir "$DINING_RUN_DIR" --receipt "$DINING_RUN_DIR/<receipt-ref>"`. A
      rejected typed response consumes the graph attempt and must not receive an accepted receipt.
+     A Codex restaurant worker on `agent-worker-afarnham` receives the scoped
+     `symphony_linkedin.lookup_profile_experience` tool when the host bridge is ready. It may use
+     that tool once per exact profile only after public sources fail to supply a required
+     role-specific employment date. It must copy raw visible evidence without inference. It must
+     preserve all other work and return `linkedinAccessIssues` when the tool requests human action.
    - `validate_proposals`: run `pnpm dining-dive-validate -- validate --run-dir
      "$DINING_RUN_DIR"`.
    - `repair_proposals`: choose one prepared repair request and pass its relative path to the same
@@ -193,7 +198,33 @@ the sentinel.
      require Issues permission on the worker credential for this closeout.
    - `awaiting_band_selection` or `awaiting_approval` in Symphony mode is an invalid checkpoint;
      report it as a blocker instead of supplying a human gate.
-   - `blocked`: if `discovery_failed` is the sole graph failure, treat this eligible claim as the
+   - `blocked`: if `linkedin_access_required` is a graph failure, treat this eligible claim as the
+     recovery authorization. A person already returned the item from `Blocked` to `Ready`; do not
+     ask for a separate confirmation. First require a clean tracked worktree with `git diff
+     --quiet` and `git diff --cached --quiet`. Update the existing workspace, then reopen the
+     saved evidence request:
+
+     ```sh
+     if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+       git fetch --unshallow origin main
+     else
+       git fetch origin main
+     fi
+     git merge --ff-only origin/main
+     pnpm install --frozen-lockfile
+     pnpm dining-dive -- reopen-linkedin --id "$DINING_DIVE_RUN_ID" \
+       --reason "The operator completed the requested LinkedIn browser action on Thor."
+     pnpm dining-dive -- status --id "$DINING_DIVE_RUN_ID"
+     ```
+
+     Confirm that the graph reports `repair_proposals`, then end the turn without the
+     input-required sentinel. The command reads each saved profile once, stores the returned
+     evidence, and resumes the existing repair request. It does not consume a repair pass or
+     restart completed research. If the command still reports a human action, add one tracker
+     comment with that exact action, emit the input-required sentinel, and stop. Do not retry the
+     profile in that turn.
+
+     If `discovery_failed` is the sole graph failure, treat this eligible claim as the
      recovery authorization. A person already returned the item from `Blocked` to `Ready`; do not
      ask for a separate confirmation. First require a clean tracked worktree with `git diff
      --quiet` and `git diff --cached --quiet`. Update the existing workspace before recovery:

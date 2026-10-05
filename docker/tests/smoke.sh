@@ -7,7 +7,9 @@ dive_claude_model="smoke-claude-model"
 dive_codex_model="smoke-codex-model"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/symphony-container-smoke.XXXXXX")
 secrets_dir="$test_root/secrets"
+linkedin_run_dir="$test_root/linkedin-run"
 mkdir -p "$secrets_dir"
+mkdir -m 0711 "$linkedin_run_dir"
 
 as_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -47,6 +49,7 @@ github_project_token=$(openssl rand -hex 24)
 github_worker_token=$(openssl rand -hex 24)
 printf '%s\n' "$github_project_token" >"$secrets_dir/github_project_token"
 printf '%s\n' "$github_worker_token" >"$secrets_dir/github_worker_token"
+openssl rand -hex 32 >"$secrets_dir/linkedin_bridge_token"
 for profile in afarnham karbas; do
   : >"$secrets_dir/${profile}_claude_oauth_token"
   : >"$secrets_dir/${profile}_openai_api_key"
@@ -59,6 +62,7 @@ as_root chmod 0400 "$secrets_dir"/*
 compose() {
   SYMPHONY_DIVE_CLAUDE_MODEL="$dive_claude_model" \
   SYMPHONY_DIVE_CODEX_MODEL="$dive_codex_model" \
+  SYMPHONY_LINKEDIN_BRIDGE_RUN_DIR="$linkedin_run_dir" \
   SYMPHONY_SECRETS_DIR="$secrets_dir" \
   SYMPHONY_WORKFLOW_FILE="$repo_root/docker/tests/WORKFLOW.md" \
     docker compose \
@@ -70,6 +74,7 @@ compose() {
 }
 
 SYMPHONY_DIVE_CODEX_MODEL= \
+SYMPHONY_LINKEDIN_BRIDGE_RUN_DIR="$linkedin_run_dir" \
 SYMPHONY_SECRETS_DIR="$secrets_dir" \
 SYMPHONY_WORKFLOW_FILE="$repo_root/docker/tests/WORKFLOW.md" \
   docker compose \
@@ -102,6 +107,10 @@ compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'printf "protocol=https\nhost=github.com\n\n" | git credential fill >/dev/null'
 compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'test -d /run/sshd && npm cache verify >/dev/null && pnpm store path >/dev/null'
+compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
+  'test -x /usr/local/bin/symphony-linkedin-experience && test -x /usr/local/bin/symphony-linkedin-mcp && test -r /run/secrets/linkedin_bridge_token && test -d /run/symphony-linkedin'
+compose exec -T agent-worker-karbas sh -lc \
+  'test ! -e /run/secrets/linkedin_bridge_token && test ! -e /run/symphony-linkedin'
 compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \
   'test "$(git config --get user.name)" = "Symphony Agent" && test "$(git config --get user.email)" = "symphony-agent@users.noreply.github.com"'
 compose exec -T symphony ssh -F /tmp/symphony-ssh/config agent-worker-afarnham \

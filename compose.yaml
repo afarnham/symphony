@@ -87,10 +87,15 @@ services:
       - symphony-afarnham-codex-auth:/home/worker/.codex
       - symphony-afarnham-worker-cache:/home/worker/.cache
       - symphony-afarnham-worker-local:/home/worker/.local
+      - type: bind
+        source: ${SYMPHONY_LINKEDIN_BRIDGE_RUN_DIR:-/run/symphony-linkedin}
+        target: /run/symphony-linkedin
+        read_only: true
     secrets:
       - github_worker_token
       - worker_ssh_authorized_key
       - worker_ssh_host_private_key
+      - linkedin_bridge_token
       - source: afarnham_claude_oauth_token
         target: claude_oauth_token
       - source: afarnham_openai_api_key
@@ -206,3 +211,5 @@ secrets:
     file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/karbas_claude_oauth_token
   karbas_openai_api_key:
     file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/karbas_openai_api_key
+  linkedin_bridge_token:
+    file: ${SYMPHONY_SECRETS_DIR:-/etc/symphony/secrets}/linkedin_bridge_token
