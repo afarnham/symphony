@@ -62,7 +62,7 @@ export class ChromeSession {
     } catch (error) {
       throw new BrowserAccessError(
         "browser_unavailable",
-        "Start Chrome on Thor and enable remote debugging in chrome://inspect/#remote-debugging.",
+        "Start or repair the dedicated Symphony LinkedIn Chrome service on Thor.",
         "Chrome DevToolsActivePort is unavailable or invalid.",
         { cause: error }
       );
@@ -90,14 +90,12 @@ export class ChromeSession {
         }),
       ]);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const permission = timedOut || /403|permission|handshake|unexpected server response/i.test(message);
       throw new BrowserAccessError(
-        permission ? "permission_required" : "browser_unavailable",
-        permission
-          ? "Approve the incoming debugging connection in Chrome on Thor."
-          : "Start Chrome on Thor and enable remote debugging in chrome://inspect/#remote-debugging.",
-        permission ? "Chrome needs debugging permission." : "Chrome is not accepting DevTools connections.",
+        "browser_unavailable",
+        "Start or repair the dedicated Symphony LinkedIn Chrome service on Thor.",
+        timedOut
+          ? "Chrome did not accept the DevTools connection before the timeout."
+          : "Chrome is not accepting DevTools connections.",
         { cause: error }
       );
     }

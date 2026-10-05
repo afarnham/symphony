@@ -1,9 +1,11 @@
 # Operate the scoped LinkedIn browser bridge on Thor
 
 This runbook enables `agent-worker-afarnham` to read visible employment evidence from one exact
-LinkedIn profile. It uses Aaron's existing signed-in Chrome profile at
-`/home/aaron/.config/google-chrome`. It does not copy cookies into a container and does not give an
-agent general browser control.
+LinkedIn profile. It uses a dedicated persistent Chrome data directory at
+`/var/lib/symphony-linkedin-chrome-aaron`. Aaron signs in to LinkedIn once in that profile; a
+headless systemd service then reuses the session after service and host restarts. Aaron's ordinary
+Chrome profile at `/home/aaron/.config/google-chrome` and all of its tabs and cookies remain
+untouched.
 
 The worker receives one MCP tool and one equivalent command:
 
@@ -19,19 +21,30 @@ open search, messaging, contact, company, or arbitrary web pages.
 
 ## Security boundary
 
-Chrome listens for DevTools only on `127.0.0.1`. A host systemd service connects to that endpoint
-and exposes a token-authenticated Unix socket at `/run/symphony-linkedin/bridge.sock`. Compose
-mounts the socket directory and token only into `agent-worker-afarnham`. The Karbas worker receives
-neither item. The nested Codex research process remains in its read-only sandbox and reaches the
-socket only through the fixed stdio MCP broker started outside that sandbox.
+The dedicated browser asks the kernel for a random DevTools port and binds it only to
+`127.0.0.1`. A host systemd service discovers the endpoint through the profile's
+`DevToolsActivePort` file and exposes a token-authenticated Unix socket at
+`/run/symphony-linkedin/bridge.sock`. Compose mounts the socket directory and token only into
+`agent-worker-afarnham`. The Karbas worker receives neither item. The nested Codex research process
+remains in its read-only sandbox and reaches the socket only through the fixed stdio MCP broker
+started outside that sandbox.
+
+Chrome's automatic default-profile connection asks for permission on every new debugging session.
+This deployment does not suppress or automate that prompt. Instead it uses Chrome's supported
+manual remote-debugging mode with a non-default data directory, so the prompt does not exist. The
+DevTools socket never leaves Thor and is not mounted into a worker.
 
 The bridge serializes profile reads. It creates a new tab for each read, marks that tab as bridge
 owned, and closes it after the read. On reconnect, it removes only orphaned tabs with that marker.
-It never closes an unrelated tab and never closes Chrome. A service restart disconnects from
-Chrome without ending the browser session.
+It never closes an unrelated tab and never closes Chrome. A bridge restart disconnects from Chrome
+without ending the browser session.
 
 The token is an authorization secret, not a LinkedIn credential. Keep it out of commands, logs,
-tickets, and environment files. LinkedIn cookies stay in the existing Chrome profile.
+tickets, and environment files. LinkedIn cookies stay in the dedicated Chrome data directory.
+Because no desktop keyring is unlocked during headless boot, Chrome runs with
+`--password-store=basic`. The profile is therefore protected at rest by its root-managed location,
+Aaron-only ownership, mode `0700`, and the host's disk/access controls rather than a desktop
+keyring. Do not place unrelated accounts or browsing data in this profile.
 
 ## Pinned runtime
 
@@ -39,35 +52,17 @@ The bridge requires Node.js 22.12 or newer. `linkedin-bridge/package-lock.json` 
 `puppeteer-core` and all indirect packages. Install with `npm ci`; do not use an unpinned global
 browser package.
 
-## Prepare Chrome
+## Install and sign in once
 
-1. Start the normal Google Chrome desktop session as `aaron` with
-   `/home/aaron/.config/google-chrome`.
-2. Open `chrome://inspect/#remote-debugging`.
-3. Enable remote debugging for this browser. Keep the listener on loopback.
-4. Confirm that `/home/aaron/.config/google-chrome/DevToolsActivePort` exists and that its port is
-   bound only to `127.0.0.1`.
-5. Keep LinkedIn signed in in this profile.
-
-Chrome can show one local permission dialog when the bridge first connects. Approve that dialog
-only when you initiated this setup. The bridge reports `permission_required` instead of retrying.
-
-Check the listener without exposing the DevTools URL:
-
-```bash
-port=$(head -n 1 /home/aaron/.config/google-chrome/DevToolsActivePort)
-ss -ltn "sport = :$port"
-```
-
-The local address must be `127.0.0.1` or `::1`. Stop if it is a LAN or public address.
-
-## Install
-
-Use the reviewed Symphony checkout at `/opt/symphony`.
+Use the reviewed Symphony checkout at `/opt/symphony`. Install both host units before bootstrapping
+the dedicated profile:
 
 ```bash
 cd /opt/symphony/linkedin-bridge
 sudo npm ci --omit=dev --ignore-scripts
+sudo install -o root -g root -m 0644 \
+  /opt/symphony/deploy/systemd/symphony-linkedin-chrome@.service \
+  /etc/systemd/system/symphony-linkedin-chrome@.service
 sudo install -o root -g root -m 0644 \
   /opt/symphony/deploy/systemd/symphony-linkedin-bridge@.service \
   /etc/systemd/system/symphony-linkedin-bridge@.service
@@ -76,12 +71,60 @@ sudo install -o root -g root -m 0755 \
 sudo symphony-admin secrets init
 sudo symphony-admin secrets verify
 sudo systemctl daemon-reload
+```
+
+`secrets init` creates `/etc/symphony/secrets/linkedin_bridge_token` once and preserves an existing
+nonempty token. The system manager presents it to the unprivileged bridge through a private
+credential file.
+
+Create the persistent state directory, then stop the headless browser before opening the same
+profile interactively:
+
+```bash
+sudo systemctl start symphony-linkedin-chrome@aaron.service
+sudo systemctl stop symphony-linkedin-chrome@aaron.service
+```
+
+From Aaron's graphical/VNC terminal, start a separate visible Chrome with the exact same storage
+mode as the boot service:
+
+```bash
+google-chrome \
+  --user-data-dir=/var/lib/symphony-linkedin-chrome-aaron \
+  --password-store=basic \
+  --no-first-run \
+  --no-default-browser-check \
+  https://www.linkedin.com/login
+```
+
+Sign in to LinkedIn, open one profile experience page to confirm the session, and then close this
+dedicated Chrome window completely. Do not copy the ordinary Chrome profile or its cookies. If the
+machine has no active graphical/VNC session, start the existing private VNC session for this
+one-time login; do not expose Chrome or DevTools on a network interface.
+
+Enable the headless browser and bridge at boot:
+
+```bash
+sudo systemctl enable --now symphony-linkedin-chrome@aaron.service
 sudo systemctl enable --now symphony-linkedin-bridge@aaron.service
 ```
 
-`secrets init` creates `/etc/symphony/secrets/linkedin_bridge_token` once. It preserves an existing
-nonempty token. The system manager presents that token to the unprivileged bridge through a
-private credential file.
+Confirm that both units are active and that the randomly selected DevTools port is loopback-only:
+
+```bash
+sudo systemctl is-active \
+  symphony-linkedin-chrome@aaron.service \
+  symphony-linkedin-bridge@aaron.service
+port=$(sudo head -n 1 \
+  /var/lib/symphony-linkedin-chrome-aaron/DevToolsActivePort)
+ss -ltn "sport = :$port"
+```
+
+The local address must be `127.0.0.1` or `::1`. Stop if it is a LAN or public address. There is no
+Chrome approval dialog in this mode.
+
+After the real-worker verification succeeds, disable remote debugging in Aaron's ordinary Chrome
+at `chrome://inspect/#remote-debugging`; the default-profile listener is no longer used.
 
 Install the updated workflow and deploy the worker image and Compose definition from the same
 reviewed release. Start the bridge before recreating the worker because Compose requires the host
@@ -96,9 +139,8 @@ sudo docker compose --env-file /etc/symphony/deployment.env config --quiet
 sudo systemctl restart symphony.service
 ```
 
-The bridge unit orders itself before `symphony.service` when both services start during boot. Its
-runtime directory stays in place across bridge restarts so the container's bind mount remains
-valid.
+The browser and bridge order themselves before `symphony.service` during boot. The bridge runtime
+directory stays in place across bridge restarts so the container's bind mount remains valid.
 
 ## Verify from the real worker
 
@@ -134,11 +176,10 @@ The bridge returns a typed action and no low-level diagnostics:
 | Reason | Required action |
 |---|---|
 | `bridge_unavailable` | Start or repair the host bridge service. |
-| `browser_unavailable` | Start Chrome and enable remote debugging in the Chrome UI. |
-| `permission_required` | Approve the local Chrome debugging prompt. |
-| `login_required` | Sign in to LinkedIn in the existing Chrome profile. |
-| `linkedin_challenge` | Complete the visible LinkedIn security challenge in Chrome. |
-| `linkedin_page_changed` | Open the experience page and confirm that entries are visible. |
+| `browser_unavailable` | Start or repair the dedicated headless Chrome service. |
+| `login_required` | Repeat the one-time sign-in using the dedicated profile. |
+| `linkedin_challenge` | Stop the headless unit, complete the challenge in visible Chrome using the dedicated profile, close Chrome, and restart the unit. |
+| `linkedin_page_changed` | Open the experience page in the dedicated profile and confirm that entries are visible. |
 
 The worker saves completed research and the access issue. Validation blocks without consuming a
 repair pass. After the action is complete and the Project item returns to `Ready`, the workflow
@@ -147,31 +188,37 @@ packet. It does not restart the dining run.
 
 ## Restart and diagnose
 
-Restarting the bridge does not restart Chrome:
+Both services restart automatically after failures and start during boot. Restarting the bridge
+does not restart Chrome or discard the LinkedIn session. Stopping the Chrome unit asks the browser
+to close through DevTools before systemd terminates any remaining processes, so profile changes are
+flushed before a normal service stop or host reboot:
 
 ```bash
 sudo systemctl restart symphony-linkedin-bridge@aaron.service
-sudo systemctl status symphony-linkedin-bridge@aaron.service --no-pager
-sudo journalctl -u symphony-linkedin-bridge@aaron.service --since today
+sudo systemctl status \
+  symphony-linkedin-chrome@aaron.service \
+  symphony-linkedin-bridge@aaron.service --no-pager
+sudo journalctl \
+  -u symphony-linkedin-chrome@aaron.service \
+  -u symphony-linkedin-bridge@aaron.service --since today
 ```
 
 The journal records service state and generic failures. It must not contain tokens, cookies,
 profile evidence, DevTools URLs, or Chrome profile contents.
 
-If Chrome restarts, confirm its loopback listener and sign-in state. The next authorized lookup
-reconnects automatically. If a prior bridge tab survived a crash, reconnect cleanup closes only
-tabs marked as bridge owned.
+If Chrome restarts, the random loopback port can change. The bridge reads the new
+`DevToolsActivePort` file and reconnects automatically; no permission approval is required. If a
+prior bridge tab survived a crash, reconnect cleanup closes only tabs marked as bridge owned.
 
 If the socket is present but a lookup fails, check these items in order:
 
-1. `systemctl is-active symphony-linkedin-bridge@aaron.service`.
-2. The Chrome process and loopback DevTools listener.
-3. A pending Chrome permission dialog.
-4. The LinkedIn sign-in or challenge page in the visible browser.
-5. The worker token and socket mounts.
+1. Both systemd units are active.
+2. The dedicated profile's DevTools port is listening only on loopback.
+3. The LinkedIn sign-in or challenge state in the dedicated profile.
+4. The worker token and socket mounts.
 
-Do not loosen URL validation, expose the DevTools port, mount the whole Chrome profile into a
-container, or add a general browser MCP server to solve an outage.
+Do not loosen URL validation, expose the DevTools port, mount the Chrome profile into a container,
+or add a general browser MCP server to solve an outage.
 
 ## Roll back
 
@@ -184,10 +231,14 @@ cd /opt/symphony
 sudo docker compose --env-file /etc/symphony/deployment.env config --quiet
 sudo systemctl restart symphony.service
 sudo systemctl disable --now symphony-linkedin-bridge@aaron.service
-sudo rm -f /etc/systemd/system/symphony-linkedin-bridge@.service
+sudo systemctl disable --now symphony-linkedin-chrome@aaron.service
+sudo rm -f \
+  /etc/systemd/system/symphony-linkedin-bridge@.service \
+  /etc/systemd/system/symphony-linkedin-chrome@.service
 sudo systemctl daemon-reload
 ```
 
-Keep `/etc/symphony/secrets/linkedin_bridge_token` protected during a temporary rollback. After a
-permanent retirement, remove it through the approved secret-destruction process. Rollback does
-not modify the Chrome profile, cookies, or ordinary browser tabs.
+Keep `/etc/symphony/secrets/linkedin_bridge_token` and
+`/var/lib/symphony-linkedin-chrome-aaron` protected during a temporary rollback. After permanent
+retirement, remove both through the approved secret-destruction process. Rollback does not modify
+Aaron's ordinary Chrome profile, cookies, or tabs.

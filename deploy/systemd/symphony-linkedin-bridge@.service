@@ -1,5 +1,8 @@
 [Unit]
 Description=Symphony scoped LinkedIn browser bridge for %i
+Documentation=https://github.com/afarnham/symphony/blob/main/docs/linkedin-browser-bridge.md
+Wants=symphony-linkedin-chrome@%i.service
+After=symphony-linkedin-chrome@%i.service
 Before=symphony.service
 
 [Service]
@@ -9,7 +12,7 @@ Group=%i
 WorkingDirectory=/opt/symphony/linkedin-bridge
 LoadCredential=auth-token:/etc/symphony/secrets/linkedin_bridge_token
 Environment=SYMPHONY_LINKEDIN_BRIDGE_SOCKET=/run/symphony-linkedin/bridge.sock
-Environment=SYMPHONY_LINKEDIN_CHROME_USER_DATA_DIR=%h/.config/google-chrome
+Environment=SYMPHONY_LINKEDIN_CHROME_USER_DATA_DIR=/var/lib/symphony-linkedin-chrome-%i
 ExecStart=/usr/bin/node /opt/symphony/linkedin-bridge/src/index.mjs
 Restart=on-failure
 RestartSec=5s

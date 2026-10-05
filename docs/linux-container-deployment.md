@@ -23,6 +23,7 @@ The checked-in operator interface is:
 /etc/symphony/secrets/                     root-only secret source files
 /usr/local/sbin/symphony-admin             secret and login utility
 /etc/systemd/system/symphony.service       boot lifecycle
+/etc/systemd/system/symphony-linkedin-chrome@.service  dedicated browser lifecycle
 /etc/systemd/system/symphony-linkedin-bridge@.service  scoped browser bridge lifecycle
 ```
 
