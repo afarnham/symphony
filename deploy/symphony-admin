@@ -65,6 +65,7 @@ Settable secret names:
   github_worker_token
   <github-login>_claude_oauth_token
   <github-login>_openai_api_key
+  linkedin_bridge_token
 
 Secret values are accepted only from a hidden terminal prompt or standard input.
 EOF
@@ -130,7 +131,7 @@ require_default_root_privileges() {
 
 is_settable_secret() {
   case "$1" in
-    github_project_token | github_worker_token) return 0 ;;
+    github_project_token | github_worker_token | linkedin_bridge_token) return 0 ;;
     *_claude_oauth_token | *_openai_api_key) is_profile_secret "$1" ;;
     *) return 1 ;;
   esac
@@ -151,6 +152,7 @@ is_profile_secret() {
 is_known_secret_file() {
   case "$1" in
     github_project_token | github_worker_token | \
+      linkedin_bridge_token | \
       worker_ssh_private_key | worker_ssh_authorized_key | \
       worker_ssh_host_private_key | worker_ssh_host_public_key)
       return 0
@@ -369,6 +371,26 @@ generate_worker_ssh_host_key() {
   TEMP_KEY_DIR=""
 }
 
+generate_linkedin_bridge_token() {
+  local destination
+  destination=$(secret_path linkedin_bridge_token)
+
+  if [[ -e "$destination" || -L "$destination" ]]; then
+    assert_safe_existing_file "$destination"
+    if [[ -s "$destination" ]]; then
+      set_secret_permissions "$destination"
+      return
+    fi
+  fi
+
+  command -v openssl >/dev/null 2>&1 || die "openssl is required to generate the LinkedIn bridge token"
+  TEMP_PATH=$(mktemp "$SECRETS_ROOT/.linkedin_bridge_token.XXXXXX")
+  openssl rand -hex 32 >"$TEMP_PATH"
+  set_secret_permissions "$TEMP_PATH"
+  mv -f "$TEMP_PATH" "$destination"
+  TEMP_PATH=""
+}
+
 secrets_init() {
   local profile
   require_default_root_privileges
@@ -391,6 +413,7 @@ secrets_init() {
   done < <(configured_worker_profiles)
   generate_worker_ssh_key
   generate_worker_ssh_host_key
+  generate_linkedin_bridge_token
 
   printf 'Initialized secrets directory: %s\n' "$SECRETS_ROOT"
   printf 'Generated worker SSH key material if it was not already present.\n'
@@ -504,6 +527,7 @@ secrets_list() {
   for name in \
     github_project_token \
     github_worker_token \
+    linkedin_bridge_token \
     worker_ssh_private_key \
     worker_ssh_authorized_key \
     worker_ssh_host_private_key \
@@ -594,6 +618,7 @@ secrets_verify() {
 
   verify_file_security github_project_token required || failed=1
   verify_file_security github_worker_token required || failed=1
+  verify_file_security linkedin_bridge_token required || failed=1
   verify_file_security worker_ssh_private_key required || failed=1
   verify_file_security worker_ssh_authorized_key required || failed=1
   verify_file_security worker_ssh_host_private_key required || failed=1

@@ -62,12 +62,13 @@ assert_file_line() {
   [[ "$actual" == "$expected" ]] || fail "$path did not contain the expected value"
 }
 
-printf '1..15\n'
+printf '1..16\n'
 
 admin secrets init >/dev/null
 [[ "$(mode_of "$SECRETS_ROOT")" == "700" ]] || fail "secrets directory mode"
 for name in \
   github_project_token github_worker_token \
+  linkedin_bridge_token \
   afarnham_claude_oauth_token afarnham_openai_api_key \
   karbas_claude_oauth_token karbas_openai_api_key \
   worker_ssh_private_key worker_ssh_authorized_key \
@@ -76,6 +77,7 @@ for name in \
 done
 ssh-keygen -l -f "$SECRETS_ROOT/worker_ssh_authorized_key" >/dev/null || fail "generated SSH key"
 ssh-keygen -l -f "$SECRETS_ROOT/worker_ssh_host_public_key" >/dev/null || fail "generated host SSH key"
+[[ "$(wc -c <"$SECRETS_ROOT/linkedin_bridge_token")" -eq 65 ]] || fail "generated LinkedIn bridge token"
 pass "init creates private files and a valid ed25519 worker key"
 
 private_fingerprint=$(ssh-keygen -lf "$SECRETS_ROOT/worker_ssh_private_key")
@@ -83,6 +85,12 @@ admin secrets init >/dev/null
 [[ "$(ssh-keygen -lf "$SECRETS_ROOT/worker_ssh_private_key")" == "$private_fingerprint" ]] ||
   fail "init replaced existing worker key"
 pass "init is idempotent and preserves generated key material"
+
+linkedin_token=$(<"$SECRETS_ROOT/linkedin_bridge_token")
+admin secrets init >/dev/null
+[[ "$(<"$SECRETS_ROOT/linkedin_bridge_token")" == "$linkedin_token" ]] ||
+  fail "init replaced existing LinkedIn bridge token"
+pass "init is idempotent and preserves the LinkedIn bridge token"
 
 cp "$SECRETS_ROOT/worker_ssh_authorized_key" "$TEST_ROOT/authorized-key.backup"
 rm -f "$SECRETS_ROOT/worker_ssh_authorized_key"
