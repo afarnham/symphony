@@ -12,6 +12,7 @@ User=%i
 Group=%i
 StateDirectory=symphony-linkedin-chrome-%i
 StateDirectoryMode=0700
+Environment=HOME=/var/lib/symphony-linkedin-chrome-%i
 UMask=0077
 ExecStart=/usr/bin/google-chrome --headless=new --no-first-run --no-default-browser-check --disable-sync --password-store=basic --remote-debugging-address=127.0.0.1 --remote-debugging-port=0 --user-data-dir=/var/lib/symphony-linkedin-chrome-%i about:blank
 ExecStop=-/usr/bin/node /opt/symphony/linkedin-bridge/src/stop-browser.mjs /var/lib/symphony-linkedin-chrome-%i
