@@ -1,5 +1,6 @@
 **
 !Dockerfile
 !*.sh
+!*.mjs
 !gitconfig
 !sshd_config
