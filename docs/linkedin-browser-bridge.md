@@ -44,7 +44,9 @@ tickets, and environment files. LinkedIn cookies stay in the dedicated Chrome da
 Because no desktop keyring is unlocked during headless boot, Chrome runs with
 `--password-store=basic`. The profile is therefore protected at rest by its root-managed location,
 Aaron-only ownership, mode `0700`, and the host's disk/access controls rather than a desktop
-keyring. Do not place unrelated accounts or browsing data in this profile.
+keyring. The service also sets Chrome's `HOME` to that private state directory so Chrome can create
+its launcher and crash-handler state while the real `/home` tree remains hidden by systemd.
+Do not place unrelated accounts or browsing data in this profile.
 
 ## Pinned runtime
 
