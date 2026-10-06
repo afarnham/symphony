@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import http from "node:http";
 
 import { BrowserAccessError } from "./browser.mjs";
+import { sanitizeEmptyExperienceDiagnostics } from "./extraction.mjs";
 
 const MAX_BODY_BYTES = 4_096;
 
@@ -40,12 +41,14 @@ export function createBridgeServer({ service, token }) {
         });
       }
       if (error instanceof BrowserAccessError) {
+        const diagnostics = sanitizeEmptyExperienceDiagnostics(error.diagnostics);
         return send(response, 503, {
           status: "human_action_required",
           profileUrl: error.profileUrl,
           reason: error.reason,
           action: error.action,
           message: error.message,
+          ...(diagnostics ? { diagnostics } : {}),
         });
       }
       console.error("LinkedIn bridge lookup failed without response details.");

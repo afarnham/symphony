@@ -10,6 +10,7 @@ export class BrowserAccessError extends Error {
     this.name = "BrowserAccessError";
     this.reason = reason;
     this.action = action;
+    this.diagnostics = options?.diagnostics;
   }
 }
 

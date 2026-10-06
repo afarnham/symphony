@@ -1,0 +1,44 @@
+[
+  {
+    "name": "visible main aria-busy state",
+    "main": { "visible": true, "ariaBusy": true, "heading": null, "items": [], "progress": [] },
+    "expected": { "loadingIndicatorPresent": true, "classification": "page_not_ready" }
+  },
+  {
+    "name": "visible nested progress indicator",
+    "main": { "visible": true, "ariaBusy": false, "heading": null, "items": [], "progress": [{ "visible": true }] },
+    "expected": { "loadingIndicatorPresent": true, "classification": "page_not_ready" }
+  },
+  {
+    "name": "hidden nested progress indicator",
+    "main": { "visible": true, "ariaBusy": false, "heading": null, "items": [], "progress": [{ "visible": false }] },
+    "expected": { "loadingIndicatorPresent": false, "classification": "experience_section_missing" }
+  },
+  {
+    "name": "missing experience section",
+    "main": { "visible": true, "ariaBusy": false, "heading": "About", "items": [], "progress": [] },
+    "expected": { "experienceSectionPresent": false, "classification": "experience_section_missing" }
+  },
+  {
+    "name": "visible empty experience section",
+    "main": { "visible": true, "ariaBusy": false, "heading": "Experience", "items": [], "progress": [] },
+    "expected": { "experienceSectionPresent": true, "experienceSectionHasNonHeadingText": false, "classification": "experience_section_empty" }
+  },
+  {
+    "name": "visible experience entry with an unrecognized date phrase",
+    "main": {
+      "visible": true,
+      "ariaBusy": false,
+      "heading": "Experience",
+      "items": [{ "visible": true, "text": "Executive Chef\nExample Restaurant\nSpring twenty twenty to today" }],
+      "progress": []
+    },
+    "expected": {
+      "experienceSectionPresent": true,
+      "experienceSectionHasNonHeadingText": true,
+      "visibleExperienceItemCount": 1,
+      "datedCandidateCount": 0,
+      "classification": "experience_entries_unrecognized"
+    }
+  }
+]
