@@ -5,7 +5,11 @@ import {
   closeOrphanedOwnedPages,
   OWNED_PAGE_PREFIX,
 } from "./browser.mjs";
-import { inspectExperiencePage, normalizeExperienceBlocks } from "./extraction.mjs";
+import {
+  buildEmptyExperienceDiagnostics,
+  inspectExperiencePage,
+  normalizeExperienceBlocks,
+} from "./extraction.mjs";
 import { canonicalizeLinkedInProfileUrl } from "./scope.mjs";
 
 export class LinkedInExperienceService {
@@ -70,10 +74,12 @@ export class LinkedInExperienceService {
       assertUsableLinkedInPage(inspected);
       const evidence = normalizeExperienceBlocks(inspected.blocks);
       if (evidence.length === 0) {
+        const diagnostics = buildEmptyExperienceDiagnostics(inspected.signals);
         throw new BrowserAccessError(
           "linkedin_page_changed",
-          "Open the profile experience page in Chrome and confirm that experience entries are visible.",
-          "LinkedIn returned no scoped experience evidence."
+          "Open the profile experience page in the dedicated Symphony LinkedIn Chrome profile on Thor and confirm whether the Experience section and dated entries are visible.",
+          "LinkedIn returned no scoped experience evidence.",
+          { diagnostics }
         );
       }
       return {
@@ -143,7 +149,7 @@ function assertUsableLinkedInPage(page) {
   if (location.hostname !== "www.linkedin.com" || !/\/in\/[^/]+\/details\/experience\/?$/.test(path)) {
     throw new BrowserAccessError(
       "linkedin_page_changed",
-      "Open the profile experience page in Chrome and inspect the redirect.",
+      "Open the profile experience page in the dedicated Symphony LinkedIn Chrome profile on Thor and inspect the redirect.",
       "LinkedIn redirected outside the approved profile experience page."
     );
   }

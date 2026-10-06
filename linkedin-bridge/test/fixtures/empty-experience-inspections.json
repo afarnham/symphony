@@ -1,0 +1,92 @@
+[
+  {
+    "name": "page still loading without main content",
+    "signals": {
+      "mainPresent": false,
+      "mainVisible": false,
+      "experienceHeadingPresent": false,
+      "experienceSectionPresent": false,
+      "experienceSectionHasNonHeadingText": false,
+      "visibleExperienceItemCount": 0,
+      "datedCandidateCount": 0,
+      "loadingIndicatorPresent": true,
+      "unavailableMarkerPresent": false
+    },
+    "classification": "page_not_ready"
+  },
+  {
+    "name": "explicit unavailable profile notice",
+    "signals": {
+      "mainPresent": true,
+      "mainVisible": true,
+      "experienceHeadingPresent": false,
+      "experienceSectionPresent": false,
+      "experienceSectionHasNonHeadingText": false,
+      "visibleExperienceItemCount": 0,
+      "datedCandidateCount": 0,
+      "loadingIndicatorPresent": false,
+      "unavailableMarkerPresent": true
+    },
+    "classification": "profile_unavailable"
+  },
+  {
+    "name": "profile page without the expected experience section",
+    "signals": {
+      "mainPresent": true,
+      "mainVisible": true,
+      "experienceHeadingPresent": false,
+      "experienceSectionPresent": false,
+      "experienceSectionHasNonHeadingText": false,
+      "visibleExperienceItemCount": 7,
+      "datedCandidateCount": 0,
+      "loadingIndicatorPresent": false,
+      "unavailableMarkerPresent": false
+    },
+    "classification": "experience_section_missing"
+  },
+  {
+    "name": "visible but empty experience section",
+    "signals": {
+      "mainPresent": true,
+      "mainVisible": true,
+      "experienceHeadingPresent": true,
+      "experienceSectionPresent": true,
+      "experienceSectionHasNonHeadingText": false,
+      "visibleExperienceItemCount": 0,
+      "datedCandidateCount": 0,
+      "loadingIndicatorPresent": false,
+      "unavailableMarkerPresent": false
+    },
+    "classification": "experience_section_empty"
+  },
+  {
+    "name": "visible experience items without recognized dated evidence",
+    "signals": {
+      "mainPresent": true,
+      "mainVisible": true,
+      "experienceHeadingPresent": true,
+      "experienceSectionPresent": true,
+      "experienceSectionHasNonHeadingText": true,
+      "visibleExperienceItemCount": 3,
+      "datedCandidateCount": 0,
+      "loadingIndicatorPresent": false,
+      "unavailableMarkerPresent": false
+    },
+    "classification": "experience_entries_unrecognized"
+  },
+  {
+    "name": "dated candidates rejected by strict normalization",
+    "signals": {
+      "mainPresent": true,
+      "mainVisible": true,
+      "experienceHeadingPresent": true,
+      "experienceSectionPresent": true,
+      "experienceSectionHasNonHeadingText": true,
+      "visibleExperienceItemCount": 2,
+      "datedCandidateCount": 2,
+      "loadingIndicatorPresent": false,
+      "unavailableMarkerPresent": false
+    },
+    "classification": "scoped_evidence_rejected"
+  }
+]

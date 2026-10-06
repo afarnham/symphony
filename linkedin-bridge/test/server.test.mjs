@@ -71,6 +71,62 @@ test("reports browser human action without diagnostics or credentials", async ()
   }
 });
 
+test("returns only allow-listed bounded extraction diagnostics", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "linkedin-bridge-test-"));
+  const socket = join(directory, "bridge.sock");
+  const service = {
+    async lookup() {
+      const error = new BrowserAccessError(
+        "linkedin_page_changed",
+        "Use the dedicated profile.",
+        "No evidence.",
+        { diagnostics: {
+          schemaVersion: 1,
+          classification: "experience_entries_unrecognized",
+          mainPresent: true,
+          mainVisible: true,
+          experienceHeadingPresent: true,
+          experienceSectionPresent: true,
+          experienceSectionHasNonHeadingText: true,
+          visibleExperienceItemCount: 4_096,
+          datedCandidateCount: 0,
+          loadingIndicatorPresent: false,
+          unavailableMarkerPresent: false,
+          bodyText: "private page text",
+          cookies: "secret-cookie",
+          token,
+        } }
+      );
+      error.profileUrl = "https://www.linkedin.com/in/example/details/experience/";
+      throw error;
+    },
+  };
+  const server = createBridgeServer({ service, token });
+  await new Promise((resolve) => server.listen(socket, resolve));
+  try {
+    const response = await request(socket, token, "https://www.linkedin.com/in/example");
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(response.body.diagnostics, {
+      schemaVersion: 1,
+      classification: "experience_entries_unrecognized",
+      mainPresent: true,
+      mainVisible: true,
+      experienceHeadingPresent: true,
+      experienceSectionPresent: true,
+      experienceSectionHasNonHeadingText: true,
+      visibleExperienceItemCount: 128,
+      datedCandidateCount: 0,
+      loadingIndicatorPresent: false,
+      unavailableMarkerPresent: false,
+    });
+    assert.doesNotMatch(JSON.stringify(response.body), /private page text|secret-cookie/);
+    assert.doesNotMatch(JSON.stringify(response.body), new RegExp(token));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function request(socketPath, bearer, profileUrl) {
   return new Promise((resolve, reject) => {
     const request = http.request({

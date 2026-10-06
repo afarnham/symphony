@@ -173,7 +173,9 @@ missing and it has the exact profile URL. Inspect the saved restaurant artifact 
 
 ## Human-action results
 
-The bridge returns a typed action and no low-level diagnostics:
+The bridge returns a typed action. A failed extraction also includes a bounded diagnostic summary
+with an allow-listed classification, booleans, and capped element counts. It never includes page
+text, HTML, selectors, cookies, tokens, contacts, or Chrome profile contents.
 
 | Reason | Required action |
 |---|---|
@@ -181,7 +183,13 @@ The bridge returns a typed action and no low-level diagnostics:
 | `browser_unavailable` | Start or repair the dedicated headless Chrome service. |
 | `login_required` | Repeat the one-time sign-in using the dedicated profile. |
 | `linkedin_challenge` | Stop the headless unit, complete the challenge in visible Chrome using the dedicated profile, close Chrome, and restart the unit. |
-| `linkedin_page_changed` | Open the experience page in the dedicated profile and confirm that entries are visible. |
+| `linkedin_page_changed` | Open the experience page in the dedicated Symphony LinkedIn Chrome profile on Thor and confirm whether the Experience section and dated entries are visible. |
+
+The failed-extraction `diagnostics.classification` distinguishes `page_not_ready`,
+`profile_unavailable`, `experience_section_missing`, `experience_section_empty`,
+`experience_entries_unrecognized`, and the defensive `scoped_evidence_rejected` fallback. These
+signals explain why extraction stopped; they do not relax the evidence requirement or authorize a
+second lookup.
 
 The worker saves completed research and the access issue. Validation blocks without consuming a
 repair pass. After the action is complete and the Project item returns to `Ready`, the workflow
