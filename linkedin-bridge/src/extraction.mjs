@@ -127,9 +127,9 @@ export function inspectExperiencePage() {
   const experienceSectionHasNonHeadingText = Boolean(
     experienceSection && linesFor(experienceSection).some((line) => !headingPattern.test(line))
   );
-  const loadingIndicatorPresent = Boolean(
-    main?.querySelector('[aria-busy="true"], [role="progressbar"]')
-  );
+  const loadingSelector = '[aria-busy="true"], [role="progressbar"]';
+  const loadingIndicatorPresent = Boolean(main && [main, ...main.querySelectorAll(loadingSelector)]
+    .some((indicator) => indicator.matches(loadingSelector) && visible(indicator)));
   const unavailableMarkerPresent = /(?:this profile is not available|profile not found|profile unavailable|the profile you(?:'|’)re looking for (?:isn(?:'|’)t|is not) public or doesn(?:'|’)t|this page doesn(?:'|’)t exist)/i
     .test(bodyText);
   const visibleExperienceItems = experienceSection
