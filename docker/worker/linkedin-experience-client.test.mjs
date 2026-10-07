@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 const client = new URL("./linkedin-experience-client.mjs", import.meta.url);
+const runbook = new URL("../../docs/linkedin-browser-bridge.md", import.meta.url);
 
 test("CLI sends the token through a Unix socket and prints bridge JSON", async () => {
   await withBridge(async ({ directory, socket, tokenFile, token }) => {
@@ -72,7 +73,62 @@ test("CLI turns a rejected bridge credential into one operator action", async ()
   }, { responseStatus: 401 });
 });
 
-async function withBridge(callback, { responseStatus = 200 } = {}) {
+test("CLI exits after a human-action response while its stdin pipe remains open", async () => {
+  const humanAction = {
+    status: "human_action_required",
+    profileUrl: "https://www.linkedin.com/in/example/details/experience/",
+    reason: "linkedin_page_changed",
+    action: "Use the dedicated Thor profile.",
+    message: "No scoped evidence.",
+    diagnostics: {
+      schemaVersion: 1,
+      classification: "experience_section_missing",
+      mainPresent: true,
+      mainVisible: true,
+      experienceHeadingPresent: false,
+      experienceSectionPresent: false,
+      experienceSectionHasNonHeadingText: false,
+      visibleExperienceItemCount: 0,
+      datedCandidateCount: 0,
+      loadingIndicatorPresent: false,
+      unavailableMarkerPresent: false,
+    },
+  };
+  await withBridge(async ({ socket, tokenFile }) => {
+    const child = spawn(process.execPath, [client.pathname, "https://www.linkedin.com/in/example"], {
+      env: environment(socket, tokenFile),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const result = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("CLI did not exit after its response.")), 1_000);
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.once("exit", (code, signal) => {
+        clearTimeout(timer);
+        resolve({ code, signal });
+      });
+    });
+    assert.deepEqual(result, { code: 2, signal: null });
+    assert.deepEqual(JSON.parse(stdout), humanAction);
+    assert.equal(stderr, "");
+    assert.equal(child.stdin.writableEnded, false);
+    child.stdin.destroy();
+  }, { responseStatus: 503, responseBody: humanAction });
+});
+
+test("runbook worker checks disable both TTY and interactive stdin", async () => {
+  const contents = await readFile(runbook, "utf8");
+  const commands = contents.match(/docker compose[^\n]+exec -T --interactive=false/g) ?? [];
+  assert.equal(commands.length, 2);
+});
+
+async function withBridge(callback, { responseStatus = 200, responseBody } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "linkedin-client-test-"));
   const socket = join(directory, "bridge.sock");
   const tokenFile = join(directory, "token");
@@ -85,6 +141,10 @@ async function withBridge(callback, { responseStatus = 200 } = {}) {
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     response.setHeader("content-type", "application/json");
     response.statusCode = responseStatus;
+    if (responseBody) {
+      response.end(JSON.stringify(responseBody));
+      return;
+    }
     if (responseStatus !== 200) {
       response.end(JSON.stringify({ status: "rejected", reason: "unauthorized" }));
       return;
