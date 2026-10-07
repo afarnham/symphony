@@ -29,7 +29,7 @@ hooks:
     git clone --depth 1 https://github.com/GHW-Consulting/app-tastemap.git .
     pnpm install --frozen-lockfile
 agent:
-  backend: codex
+  backend: claude
   max_concurrent_agents: 3
   max_turns: 40
   max_retry_backoff_ms: 300000
@@ -40,7 +40,7 @@ agent:
       - thor-claw
     profiles:
       afarnham:
-        default_backend: codex
+        default_backend: claude
         worker_hosts:
           - worker@agent-worker-afarnham
       karbas:
