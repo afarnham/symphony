@@ -60,7 +60,7 @@ codex:
 claude:
   command: claude
   permission_mode: bypassPermissions
-  read_timeout_ms: 5000
+  read_timeout_ms: 300000
   turn_timeout_ms: 3600000
   stall_timeout_ms: 300000
 ---
