@@ -150,10 +150,14 @@ Do not test this path through the orchestrator's SSH wrapper. Run the client in 
 
 ```bash
 cd /opt/symphony
-sudo docker compose --env-file /etc/symphony/deployment.env exec -T \
+sudo docker compose --env-file /etc/symphony/deployment.env exec -T --interactive=false \
   agent-worker-afarnham \
   symphony-linkedin-experience https://www.linkedin.com/in/<approved-profile>
 ```
+
+Both flags are required for scripted use: `-T` disables the pseudo-TTY, while
+`--interactive=false` prevents Compose from keeping its default stdin relay open after the client
+has printed its result.
 
 A successful result has `status: "ok"`, a canonical `profileUrl`, a nonempty `evidence` array,
 `retrievedAt`, and `accessMethod: "signed_in_chrome_devtools"`.
@@ -161,7 +165,7 @@ A successful result has `status: "ok"`, a canonical `profileUrl`, a nonempty `ev
 Confirm the worker boundary:
 
 ```bash
-sudo docker compose --env-file /etc/symphony/deployment.env exec -T \
+sudo docker compose --env-file /etc/symphony/deployment.env exec -T --interactive=false \
   agent-worker-karbas sh -lc \
   'test ! -e /run/secrets/linkedin_bridge_token && test ! -e /run/symphony-linkedin/bridge.sock'
 ```
