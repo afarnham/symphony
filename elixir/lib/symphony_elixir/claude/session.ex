@@ -282,7 +282,8 @@ defmodule SymphonyElixir.Claude.Session do
         StreamParser.new(
           issue_id: issue.id,
           turn_id: turn_id,
-          metadata: metadata
+          metadata: metadata,
+          max_line_bytes: Map.get(state.claude, :max_line_bytes) || 16_777_216
         )
 
       emit_event(on_event, :turn_started, issue.id, resume_session_id, turn_id, %{}, metadata)

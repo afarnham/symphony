@@ -63,6 +63,7 @@ defmodule SymphonyElixir.CoreTest do
     assert config.claude.turn_timeout_ms == 90_000
     assert config.claude.read_timeout_ms == 2_000
     assert config.claude.stall_timeout_ms == 10_000
+    assert config.claude.max_line_bytes == 16_777_216
     assert :ok = Config.validate_settings(config)
 
     write_workflow_file!(Workflow.workflow_file_path(),
