@@ -30,7 +30,8 @@ defmodule SymphonyElixir.GitHub.AgentTool do
         "additionalProperties" => true
       },
       "body" => %{
-        "description" => "Optional JSON request body."
+        "type" => ["object", "array", "null"],
+        "description" => "Optional JSON request body, as an object or array (not a JSON string)."
       }
     }
   }
@@ -73,11 +74,22 @@ defmodule SymphonyElixir.GitHub.AgentTool do
     with {:ok, method} <- normalize_method(Map.get(arguments, "method")),
          {:ok, path} <- normalize_path(Map.get(arguments, "path")),
          {:ok, params} <- normalize_params(Map.get(arguments, "params")) do
-      {:ok, method, path, params, Map.get(arguments, "body")}
+      {:ok, method, path, params, normalize_body(Map.get(arguments, "body"))}
     end
   end
 
   defp normalize_arguments(_arguments), do: {:error, :invalid_arguments}
+
+  # Some MCP clients send the body as a JSON-encoded string. GitHub rejects a
+  # string body with HTTP 422, so decode it when it holds an object or array.
+  defp normalize_body(body) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, decoded} when is_map(decoded) or is_list(decoded) -> decoded
+      _ -> body
+    end
+  end
+
+  defp normalize_body(body), do: body
 
   defp normalize_method(method) when is_binary(method) do
     normalized = method |> String.trim() |> String.upcase()
