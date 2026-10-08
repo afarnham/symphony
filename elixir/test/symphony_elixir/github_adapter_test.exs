@@ -237,6 +237,38 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
              )
   end
 
+  test "github_api decodes a JSON-string body before sending it" do
+    test_pid = self()
+
+    response =
+      GitHubAgentTool.execute(
+        "github_api",
+        %{
+          "method" => "PATCH",
+          "path" => "/repos/octo/repo/issues/42",
+          "body" => ~s({"state":"closed","state_reason":"completed"})
+        },
+        github_client: fn method, path, _params, body, _opts ->
+          send(test_pid, {:github_tool_called, method, path, body})
+          {:ok, %{status: 200, body: %{"state" => "closed"}}}
+        end
+      )
+
+    assert_received {:github_tool_called, "PATCH", "/repos/octo/repo/issues/42", %{"state" => "closed", "state_reason" => "completed"}}
+    assert response["success"] == true
+
+    GitHubAgentTool.execute(
+      "github_api",
+      %{"method" => "POST", "path" => "/markdown/raw", "body" => "not json"},
+      github_client: fn _method, _path, _params, body, _opts ->
+        send(test_pid, {:raw_body, body})
+        {:ok, %{status: 200, body: "ok"}}
+      end
+    )
+
+    assert_received {:raw_body, "not json"}
+  end
+
   test "github_api preserves REST status and body while rejecting unsafe arguments" do
     test_pid = self()
     tracker_settings = tracker_settings()
