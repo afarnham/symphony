@@ -184,7 +184,9 @@ the sentinel.
      "$DINING_RUN_DIR" --repo-dir . --repo GHW-Consulting/app-tastemap`. The command
      requests squash auto-merge when the PR is open and records a transition only after GitHub reports the
      merge. If GitHub still reports the PR open, leave the item `In Progress` and end the turn
-     without emitting the blocker sentinel.
+     without emitting the blocker sentinel. If the PR conflicts with main, the command rebuilds
+     the band branch on main and the graph reports `stage_patch`; continue from that node. Never
+     resolve seed-data conflicts by hand.
    - `finalize_run`: run `pnpm dining-dive-publish -- closeout --run-dir "$DINING_RUN_DIR"
      --repo-dir . --repo GHW-Consulting/app-tastemap --tracker-managed`. Confirm the graph now
      reports `complete`. Read `artifacts/closeout.json`, then use the orchestrator tools—not the
