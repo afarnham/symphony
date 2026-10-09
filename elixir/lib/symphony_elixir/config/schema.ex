@@ -450,6 +450,9 @@ defmodule SymphonyElixir.Config.Schema do
       field(:turn_timeout_ms, :integer, default: 3_600_000)
       field(:read_timeout_ms, :integer, default: 5_000)
       field(:stall_timeout_ms, :integer, default: 300_000)
+      # One stream-json line carries a whole tool result, so large file reads
+      # can exceed a megabyte.
+      field(:max_line_bytes, :integer, default: 16_777_216)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -463,7 +466,8 @@ defmodule SymphonyElixir.Config.Schema do
           :permission_mode,
           :turn_timeout_ms,
           :read_timeout_ms,
-          :stall_timeout_ms
+          :stall_timeout_ms,
+          :max_line_bytes
         ],
         empty_values: []
       )
@@ -474,6 +478,7 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:turn_timeout_ms, greater_than: 0)
       |> validate_number(:read_timeout_ms, greater_than: 0)
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
+      |> validate_number(:max_line_bytes, greater_than: 0)
     end
 
     defp validate_non_blank(changeset, field) do
