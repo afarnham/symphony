@@ -256,3 +256,18 @@ Keep `/etc/symphony/secrets/linkedin_bridge_token` and
 `/var/lib/symphony-linkedin-chrome-aaron` protected during a temporary rollback. After permanent
 retirement, remove both through the approved secret-destruction process. Rollback does not modify
 Aaron's ordinary Chrome profile, cookies, or tabs.
+
+## Container mode (hosts where a worker cannot reach a host socket)
+
+On Docker hosts that run containers in a VM, such as OrbStack on macOS, a host Unix socket bind
+mounted into the worker refuses connections. There the `symphony-linkedin-browser` image runs
+Chromium on a virtual display and the bridge in one container. DevTools stays on that container's
+loopback. The bridge's socket reaches `agent-worker-afarnham` through a shared volume mounted at
+`/run/symphony-linkedin`, and the token is the same `linkedin_bridge_token` secret. The Chromium
+profile lives in its own volume. The deployment must give the container a fixed hostname so the
+profile lock survives restarts.
+
+Sign in once by starting the container with `SYMPHONY_LINKEDIN_LOGIN=1` and port `6080` published
+on the host's loopback only. Open `http://127.0.0.1:6080/vnc.html`, sign in to LinkedIn in the
+Chromium window, then restart the container without the flag and port. The sign-in view is never
+published otherwise.
