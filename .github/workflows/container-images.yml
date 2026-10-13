@@ -91,6 +91,10 @@ jobs:
             image: ghcr.io/afarnham/symphony-agent-worker
             context: ./docker/worker
             dockerfile: ./docker/worker/Dockerfile
+          - name: linkedin-browser
+            image: ghcr.io/afarnham/symphony-linkedin-browser
+            context: .
+            dockerfile: ./docker/linkedin-browser/Dockerfile
 
     steps:
       - name: Checkout
@@ -149,6 +153,10 @@ jobs:
             image: ghcr.io/afarnham/symphony-agent-worker
             context: ./docker/worker
             dockerfile: ./docker/worker/Dockerfile
+          - name: linkedin-browser
+            image: ghcr.io/afarnham/symphony-linkedin-browser
+            context: .
+            dockerfile: ./docker/linkedin-browser/Dockerfile
 
     steps:
       - name: Checkout

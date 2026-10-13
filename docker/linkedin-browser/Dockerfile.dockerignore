@@ -1,0 +1,5 @@
+**
+!docker/linkedin-browser/
+!linkedin-bridge/package.json
+!linkedin-bridge/package-lock.json
+!linkedin-bridge/src/
