@@ -264,7 +264,8 @@ the sentinel.
      requests. `persist-deferred` first re-applies this run's deferred backlog entries if the
      update to main removed its unpublished write; never stash or hand-merge `_backlog.json`.
      Each request lists the validator's failed checks; fix exactly those fields and do not
-     discard verified people, roles, or evidence. The command works once per band. If it refuses,
+     discard verified people, roles, or evidence. A band can reopen up to three times, and each
+     reopen after the first needs the previous reopened pass to have reduced the issues. If it refuses,
      report the blocker and stop. For every other blocked checkpoint, report
      the exact checkpoint and required human action, emit the input-required sentinel, and stop.
 
