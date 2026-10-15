@@ -246,7 +246,23 @@ the sentinel.
 
      Confirm that the graph reports `discovery`, then end the turn without the input-required
      sentinel. The recovery command archives the failed discovery artifact and receipt. It must
-     fail closed if another block reason is present. For every other blocked checkpoint, report
+     fail closed if another block reason is present.
+
+     If `repair_attempts_exhausted` is a graph failure and `linkedin_access_required` is not,
+     treat this eligible claim as authorization for one more targeted repair pass. Require a clean
+     tracked worktree, update the existing workspace exactly as above (fetch, `git merge --ff-only
+     origin/main`, `pnpm install --frozen-lockfile`), then run:
+
+     ```sh
+     pnpm dining-dive-validate -- reopen-repair --run-dir "$DINING_RUN_DIR" \
+       --reason "A person returned the exhausted band to Ready for one more repair pass."
+     pnpm dining-dive -- status --id "$DINING_DIVE_RUN_ID"
+     ```
+
+     Confirm that the graph reports `repair_proposals` and continue with the prepared repair
+     requests. Each request lists the validator's failed checks; fix exactly those fields and do not
+     discard verified people, roles, or evidence. The command works once per band. If it refuses,
+     report the blocker and stop. For every other blocked checkpoint, report
      the exact checkpoint and required human action, emit the input-required sentinel, and stop.
 
    Keep the Project item `In Progress` through discovery, every restaurant task, every band PR,
