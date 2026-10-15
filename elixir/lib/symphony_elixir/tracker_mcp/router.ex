@@ -53,18 +53,26 @@ defmodule SymphonyElixir.TrackerMCP.Router do
          credential_digest = credential_digest(token),
          :ok <- safe_server_call(fn -> Server.health(opts.server, credential_digest, scope_identity(conn)) end),
          :ok <- require_json_content_type(conn),
-         {:ok, body, conn} <- read_bounded_body(conn, opts.max_body_bytes),
-         {:ok, request} <- decode_request(body),
+         {:ok, body, conn} <- read_bounded_body(conn, opts.max_body_bytes) do
+      serve_rpc_body(conn, body, credential_digest, opts)
+    else
+      {:error, :payload_too_large, conn} -> json_error(close_connection(conn), 413, "payload_too_large")
+      {:error, :invalid_content_type} -> json_error(conn, 415, "unsupported_media_type")
+      {:error, reason} -> authorization_error(conn, reason)
+    end
+  end
+
+  # After read_body only the returned conn is current, so every response here
+  # must use it rather than the conn from before the read.
+  defp serve_rpc_body(conn, body, credential_digest, opts) do
+    with {:ok, request} <- decode_request(body),
          :ok <- validate_mcp_headers(conn, request),
          result <- safe_server_call(fn -> Server.rpc(opts.server, credential_digest, scope_identity(conn), request) end) do
       rpc_response(conn, result, opts.server)
     else
-      {:error, :payload_too_large, conn} -> json_error(close_connection(conn), 413, "payload_too_large")
-      {:error, :invalid_content_type} -> json_error(conn, 415, "unsupported_media_type")
       {:error, :invalid_json} -> json_rpc_error(conn, 400, nil, -32_700, "Parse error.")
       {:error, :invalid_request} -> json_rpc_error(conn, 400, nil, -32_600, "Invalid Request.")
       {:error, :invalid_mcp_headers} -> json_error(conn, 400, "invalid_mcp_headers")
-      {:error, reason} -> authorization_error(conn, reason)
     end
   end
 
