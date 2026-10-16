@@ -61,7 +61,7 @@ claude:
   command: claude
   permission_mode: bypassPermissions
   read_timeout_ms: 300000
-  turn_timeout_ms: 3600000
+  turn_timeout_ms: 14400000
   stall_timeout_ms: 300000
 ---
 
