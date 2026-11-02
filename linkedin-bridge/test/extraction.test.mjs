@@ -99,13 +99,48 @@ test("collects visible loading and experience signals from offline DOM fixtures"
   }
 });
 
+test("reads entries from LinkedIn markup without list items or heading tags", () => {
+  const main = new FixtureElement("main");
+  const list = main.append(new FixtureElement("div"));
+  list.append(new FixtureElement("div")).append(new FixtureElement("p", { text: "Experience" }));
+  const entry = (parent, lines) => {
+    const box = parent.append(new FixtureElement("div"));
+    for (const text of lines) box.append(new FixtureElement("div")).append(new FixtureElement("p", { text }));
+  };
+  entry(list, ["Chef de Cuisine - Sous chef", "Kebaya restaurant", "Aug 2012 - Aug 2015 · 3 yrs 1 mo", "George town, Penang", "Modern Nonya cuisine."]);
+  entry(list, ["Commis", "Virginia Court Hotel", "Oct 2022"]);
+  entry(list, ["Cook", "Described 17 - 31 January 2007", "Jul 2009 - Present · 2 yrs"]);
+  const group = list.append(new FixtureElement("div"));
+  entry(group, ["Animalon Restaurant", "8 yrs 1 mo", "Valle de Guadalupe"]);
+  const roles = group.append(new FixtureElement("ul"));
+  for (const [role, dates] of [["Executive Chef", "Oct 2019 - Present · 7 yrs 2 mos"], ["Sous Chef", "Nov 2018 - Oct 2019 · 1 yr"]]) {
+    entry(roles.append(new FixtureElement("li")), [role, "Contract", dates]);
+  }
+  const restore = installDom(main);
+  try {
+    const inspected = inspectExperiencePage();
+    assert.equal(inspected.signals.experienceHeadingPresent, true);
+    assert.equal(inspected.signals.datedCandidateCount, 5);
+    assert.deepEqual(
+      normalizeExperienceBlocks(inspected.blocks).map(({ roleText, employerText, dateText }) => [roleText, employerText, dateText]),
+      [
+        ["Chef de Cuisine - Sous chef", "Kebaya restaurant", "Aug 2012 - Aug 2015 · 3 yrs 1 mo"],
+        ["Commis", "Virginia Court Hotel", "Oct 2022"],
+        ["Cook", "Described 17 - 31 January 2007", "Jul 2009 - Present · 2 yrs"],
+        ["Executive Chef", "Animalon Restaurant", "Oct 2019 - Present · 7 yrs 2 mos"],
+        ["Sous Chef", "Animalon Restaurant", "Nov 2018 - Oct 2019 · 1 yr"],
+      ]
+    );
+  } finally {
+    restore();
+  }
+});
+
 function pick(value, keys) {
   return Object.fromEntries(keys.filter((key) => key !== "classification").map((key) => [key, value[key]]));
 }
 
 function installFixtureDom(fixture) {
-  const priorWindow = globalThis.window;
-  const priorDocument = globalThis.document;
   const main = new FixtureElement("main", { visible: fixture.visible, ariaBusy: fixture.ariaBusy });
   if (fixture.heading) {
     const section = main.append(new FixtureElement("section"));
@@ -115,6 +150,12 @@ function installFixtureDom(fixture) {
   for (const progress of fixture.progress) {
     main.append(new FixtureElement("div", { ...progress, role: "progressbar" }));
   }
+  return installDom(main);
+}
+
+function installDom(main) {
+  const priorWindow = globalThis.window;
+  const priorDocument = globalThis.document;
   globalThis.window = {
     location: { href: "https://www.linkedin.com/in/example/details/experience/" },
     getComputedStyle: (element) => ({
@@ -169,8 +210,14 @@ class FixtureElement {
     return this.querySelectorAll(selector)[0] ?? null;
   }
 
+  get previousElementSibling() {
+    const siblings = this.parentElement?.children ?? [];
+    return siblings[siblings.indexOf(this) - 1] ?? null;
+  }
+
   querySelectorAll(selector) {
     const descendants = this.descendants();
+    if (selector === "*") return descendants;
     if (selector === "li") return descendants.filter((element) => element.tagName === "li");
     if (selector === "h1,h2,h3,[role=heading]") {
       return descendants.filter((element) => ["h1", "h2", "h3"].includes(element.tagName) || element.role === "heading");

@@ -119,11 +119,22 @@ export function inspectExperiencePage() {
   const main = document.querySelector("main");
   const bodyText = (main?.innerText ?? document.body?.innerText ?? "").slice(0, 20_000);
   const headingPattern = /^(?:experience|experiencia|expérience|berufserfahrung|esperienza|experiência)$/i;
+  // LinkedIn's markup changes: entries may be plain nested divs with no <li>,
+  // and the section title a <p>. Find entries by their visible date lines.
+  const dateShape = /^(?:\p{L}{3,}\.?\s+)?(?:19|20)\d{2}(?:\s*[-–]\s*(?:(?:\p{L}{3,}\.?\s+)?(?:19|20)\d{2}|present|current|actualidad|presente|présent|heute|oggi|hoje))?(?:\s*·.*)?$/iu;
+  const durationOnly = /^(?:\d+\s+yrs?(?:\s+\d+\s+mos?)?|\d+\s+mos?)$/i;
+  const employmentType = /^(?:full[- ]time|part[- ]time|contract|self[- ]employed|freelance|internship|apprenticeship|seasonal|temporary|permanent)$/i;
+  const allElements = main ? [...main.querySelectorAll("*")] : [];
+  const leafText = (element) => (element.innerText ?? "").replace(/\s+/g, " ").trim();
+  const leaves = allElements.filter((element) => element.children.length === 0 && visible(element));
+  const dateLeaves = leaves.filter((element) => dateShape.test(leafText(element)));
   const experienceHeading = main
-    ? [...main.querySelectorAll("h1,h2,h3,[role=heading]")]
+    ? [...main.querySelectorAll("h1,h2,h3,[role=heading]"), ...leaves]
       .find((heading) => visible(heading) && headingPattern.test((heading.innerText ?? "").trim()))
     : null;
-  const experienceSection = experienceHeading?.closest("section") ?? null;
+  const experienceSection = experienceHeading
+    ? experienceHeading.closest("section") ?? experienceHeading.parentElement
+    : null;
   const experienceSectionHasNonHeadingText = Boolean(
     experienceSection && linesFor(experienceSection).some((line) => !headingPattern.test(line))
   );
@@ -138,8 +149,33 @@ export function inspectExperiencePage() {
   const candidates = main
     ? [...main.querySelectorAll("li")].filter((item) => visible(item) && linesFor(item).some((line) => datePattern.test(line)))
     : [];
-  const leaves = candidates.filter((item) => !candidates.some((other) => other !== item && item.contains(other)));
-  const blocks = leaves.map((item) => {
+  const leafItems = candidates.filter((item) => !candidates.some((other) => other !== item && item.contains(other)));
+  const datesIn = (element) => dateLeaves.filter((leaf) => element.contains(leaf)).length;
+  const dateBlocks = dateLeaves.map((leaf) => {
+    // The entry is the largest ancestor holding only this one date.
+    let entry = leaf;
+    while (entry.parentElement && entry.parentElement !== main && datesIn(entry.parentElement) === 1) {
+      entry = entry.parentElement;
+    }
+    const lines = linesFor(entry).slice(0, 24);
+    const labels = lines.filter((line) => !dateShape.test(line));
+    // Grouped roles share a company header carrying only a total duration.
+    let groupEmployer = "";
+    for (let node = entry, depth = 0; node && node !== main && depth < 4 && !groupEmployer; node = node.parentElement, depth += 1) {
+      for (let sibling = node.previousElementSibling; sibling && !groupEmployer; sibling = sibling.previousElementSibling) {
+        const siblingLines = datesIn(sibling) === 0 ? linesFor(sibling) : [];
+        if (siblingLines.some((line) => durationOnly.test(line))) groupEmployer = siblingLines[0];
+      }
+    }
+    const listed = labels[1] && !employmentType.test(labels[1]) ? labels[1] : "";
+    return {
+      lines,
+      dateLines: lines.filter((line) => dateShape.test(line)),
+      roleText: labels[0] ?? "",
+      employerText: groupEmployer || listed,
+    };
+  });
+  const legacyBlocks = leafItems.map((item) => {
     const lines = linesFor(item).slice(0, 24);
     const dateLines = lines.filter((line) => datePattern.test(line));
     const labels = lines.filter((line) => !datePattern.test(line));
@@ -153,6 +189,7 @@ export function inspectExperiencePage() {
     }
     return { lines, dateLines, roleText: labels[0] ?? "", employerText };
   });
+  const blocks = dateBlocks.length > 0 ? dateBlocks : legacyBlocks;
   return {
     url: window.location.href,
     title: document.title,
@@ -164,8 +201,8 @@ export function inspectExperiencePage() {
       experienceHeadingPresent: Boolean(experienceHeading),
       experienceSectionPresent: Boolean(experienceSection),
       experienceSectionHasNonHeadingText,
-      visibleExperienceItemCount: Math.min(visibleExperienceItems.length, 128),
-      datedCandidateCount: Math.min(candidates.length, 128),
+      visibleExperienceItemCount: Math.min(Math.max(visibleExperienceItems.length, dateLeaves.length), 128),
+      datedCandidateCount: Math.min(Math.max(candidates.length, dateLeaves.length), 128),
       loadingIndicatorPresent,
       unavailableMarkerPresent,
     },
