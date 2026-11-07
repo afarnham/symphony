@@ -874,6 +874,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              )
 
     assert claimed_issue.id == "project-item-1"
+    assert claimed_issue.claimed_from_state == "Ready"
     assert_receive {:claim_transition, "project-item-1", "In Progress"}
   end
 
@@ -888,12 +889,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     no_transition = fn _issue, _state -> flunk("already-working item should not transition") end
 
-    assert {:ok, ^working_issue} =
+    assert {:ok, %Issue{claimed_from_state: "In Progress"} = claimed_issue} =
              Orchestrator.claim_issue_for_dispatch_for_test(
                working_issue,
                " in progress ",
                no_transition
              )
+
+    assert %{claimed_issue | claimed_from_state: nil} == working_issue
 
     failure = fn _issue, _state -> {:error, :forbidden} end
 

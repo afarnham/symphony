@@ -25,6 +25,8 @@ defmodule SymphonyElixir.Tracker.Issue do
     ready_actor_id: nil,
     ready_actor_automated: nil,
     release_authorization: nil,
+    # Tracker state the item had when this run claimed it, e.g. "Ready".
+    claimed_from_state: nil,
     blocked_by: [],
     labels: [],
     dispatchable: false,
@@ -48,6 +50,7 @@ defmodule SymphonyElixir.Tracker.Issue do
           ready_actor_id: String.t() | nil,
           ready_actor_automated: boolean() | nil,
           release_authorization: map() | nil,
+          claimed_from_state: String.t() | nil,
           labels: [String.t()],
           blocked_by: [map()],
           dispatchable: boolean(),
