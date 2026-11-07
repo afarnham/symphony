@@ -1423,6 +1423,13 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp claim_issue_for_dispatch(%Issue{} = issue, working_state, transitioner)
        when is_function(transitioner, 2) do
+    case do_claim_issue_for_dispatch(issue, working_state, transitioner) do
+      {:ok, %Issue{} = claimed} -> {:ok, %{claimed | claimed_from_state: issue.state}}
+      other -> other
+    end
+  end
+
+  defp do_claim_issue_for_dispatch(issue, working_state, transitioner) do
     normalized_working_state = normalize_issue_state(working_state)
 
     cond do

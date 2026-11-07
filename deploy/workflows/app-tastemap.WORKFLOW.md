@@ -28,6 +28,9 @@ hooks:
   after_create: |
     git clone --depth 1 https://github.com/GHW-Consulting/app-tastemap.git .
     pnpm install --frozen-lockfile
+  # A fresh token per run; a blocked band can reopen once per token.
+  before_run: |
+    od -An -N16 -tx1 /dev/urandom | tr -d ' \n' > .git/symphony-claim
 agent:
   backend: claude
   max_concurrent_agents: 3
@@ -256,6 +259,7 @@ the sentinel.
      ```sh
      pnpm dining-dive -- persist-deferred --id "$DINING_DIVE_RUN_ID"
      pnpm dining-dive-validate -- reopen-repair --run-dir "$DINING_RUN_DIR" \
+       --claimed-from "{{ issue.claimed_from_state }}" \
        --reason "A person returned the exhausted band to Ready for one more repair pass."
      pnpm dining-dive -- status --id "$DINING_DIVE_RUN_ID"
      ```
@@ -264,9 +268,10 @@ the sentinel.
      requests. `persist-deferred` first re-applies this run's deferred backlog entries if the
      update to main removed its unpublished write; never stash or hand-merge `_backlog.json`.
      Each request lists the validator's failed checks; fix exactly those fields and do not
-     discard verified people, roles, or evidence. A band can reopen up to three times, and each
-     reopen after the first needs the previous reopened pass to have reduced the issues. If it refuses,
-     report the blocker and stop. For every other blocked checkpoint, report
+     discard verified people, roles, or evidence. Each person-authorized Ready move buys exactly one
+     reopen: run `reopen-repair` at most once in this run. It reads this run's claim from
+     `.git/symphony-claim`, which Symphony writes; never edit, copy or recreate that file. If the reopened pass blocks again, or the command refuses, report the
+     remaining failed checks and stop; a person decides whether to return it to Ready. For every other blocked checkpoint, report
      the exact checkpoint and required human action, emit the input-required sentinel, and stop.
 
    Keep the Project item `In Progress` through discovery, every restaurant task, every band PR,
