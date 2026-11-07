@@ -37,6 +37,7 @@ chromium \
   about:blank &
 pids="$pids $!"
 
+# SYMPHONY_LINKEDIN_BRIDGE_PORT, when set, adds a TCP listener for host clients.
 SYMPHONY_LINKEDIN_BRIDGE_SOCKET=/run/symphony-linkedin/bridge.sock \
 SYMPHONY_LINKEDIN_BRIDGE_TOKEN_FILE=/run/secrets/linkedin_bridge_token \
 SYMPHONY_LINKEDIN_CHROME_USER_DATA_DIR="$profile" \
